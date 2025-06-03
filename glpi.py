@@ -5,7 +5,7 @@ import os
 import getpass
 import logging
 
-
+# --- Application Imports ---
 if __name__ == "__main__":
     import atexit
 
@@ -34,10 +34,7 @@ def confirm(question):
 
 
 
-
-
-
-
+# --- GLPI Library ---
 
 def sendglpi(endpoint:str, session_token:str, method="GET", payload=""):
     log.debug(f'{method} request to {endpoint}, with session Token {session_token} and payload {payload}')
@@ -66,6 +63,7 @@ def getId(itemtype:str=="Processor", query:str):
             log.debug("Reached getId: Model")
         case "Location":
             log.debug("Reached getId: Location")
+
 def add(itemtype:str, data:list):
     match itemtype:
         case "Computer": 
@@ -113,7 +111,7 @@ def auth(username:str, password:str, verify:bool, remember:bool):
             log.error('0400: Something went wrong. That\'s all we know. Check Debug Logs')
             return 1400
 
-
+# --- Application ---
 
 if __name__ == "__main__":
     attempts = 0
@@ -159,25 +157,3 @@ if __name__ == "__main__":
             exit()
         case 4:
             getId(input('What Item are you looking for? '), input("Please enter the Search query: "))
-    
-    
-    
-    
-    
-    
-    
-
-    
-    
-    
-    
-
-    
-    
-    
-    getId("Processor",input("Enter Processor Model: "))
-    
-    
-    
-    exit()
-
