@@ -20,7 +20,7 @@ app_token = os.getenv("APP_TOKEN")
 # --- Basics that we should always have ---
 
 def confirm(question):
-    valid_yes = ['y', 'yes', 'Y', 'Yes', 'YES', 'Ja', 'JA', 'ja']
+    valid_yes = ['y', 'yes', 'Y', 'Yes', 'YES', 'Ja', 'JA', 'ja', 'j']
     valid_no = ['n', 'no', 'N', 'No', 'NO', 'Nein', 'nein', 'NEIN']
     
     while True:
