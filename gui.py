@@ -137,9 +137,9 @@ class ThemeManager:
         BG = "#201a2b"
         FG = "#dcd4e8"
         WIDGET_BG = "#302a40"
-        PRIMARY = "#8a2be2" # BlueViolet for selections
-        ACCENT = "#9966cc" # Amethyst for hover/focus
-        BORDER = "#4a445c" # Muted border
+        PRIMARY = "#8a2be2"
+        ACCENT = "#9966cc"
+        BORDER = "#4a445c"
 
         root.configure(background=BG)
         style.theme_use('clam')
@@ -154,11 +154,9 @@ class ThemeManager:
             bordercolor=[("active", ACCENT)]
         )
         
-        # --- FIX for Entry Box Border, Padding, and Focus ---
         style.configure("TEntry", fieldbackground=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertcolor=FG, borderwidth=1, padding=5)
         style.map("TEntry", bordercolor=[("focus", ACCENT)])
         
-        # --- FIX for Checkbutton Background and Hover ---
         style.configure("TCheckbutton", background=BG, foreground=FG, indicatorbackground=WIDGET_BG, indicatorcolor=WIDGET_BG)
         style.map("TCheckbutton",
             background=[("active", BG)],
@@ -184,13 +182,11 @@ class LoginFrame(ttk.Frame):
         
         ttk.Label(frame, text="GLPI Authentication", font=("Segoe UI", 14, "bold")).pack(pady=(0, 20))
         
-        # Username
         ttk.Label(frame, text="Username:").pack(anchor=tk.W)
         self.username_var = tk.StringVar()
         self.username_entry = ttk.Entry(frame, textvariable=self.username_var, width=40)
         self.username_entry.pack(fill=tk.X, pady=(0, 10))
         
-        # --- NEW: Password Frame with Eye Button ---
         ttk.Label(frame, text="Password:").pack(anchor=tk.W)
         password_frame = ttk.Frame(frame)
         password_frame.pack(fill=tk.X, pady=(0, 10))
@@ -200,17 +196,28 @@ class LoginFrame(ttk.Frame):
         self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         self.password_visible = tk.BooleanVar(value=False)
-        self.eye_button = ttk.Button(password_frame, text="👁", command=self._toggle_password_visibility, width=3)
+        
+        # --- NEW: Using a styled tk.Button for a flat, iconic look ---
+        self.eye_button = tk.Button(
+            password_frame,
+            text="👁",
+            command=self._toggle_password_visibility,
+            borderwidth=0,
+            relief="flat",
+            background="#302a40", # WIDGET_BG
+            activebackground="#201a2b", # BG
+            foreground="#dcd4e8", # FG
+            activeforeground="#9966cc", # ACCENT
+            font=("Segoe UI", 12)
+        )
         self.eye_button.pack(side=tk.LEFT, padx=(5, 0))
         
-        # Checkboxes
         self.remember_var = tk.BooleanVar(value=self.controller.config_manager.config["authentication"]["remember_session"])
         ttk.Checkbutton(frame, text="Remember session", variable=self.remember_var).pack(anchor=tk.W)
         
         self.verify_ssl_var = tk.BooleanVar(value=self.controller.config_manager.config["glpi"]["verify_ssl"])
         ttk.Checkbutton(frame, text="Verify SSL", variable=self.verify_ssl_var).pack(anchor=tk.W)
         
-        # Login/Exit Buttons
         button_frame = ttk.Frame(frame)
         button_frame.pack(pady=20)
         ttk.Button(button_frame, text="Login", command=self.login).pack(side=tk.LEFT, padx=(0, 10))
@@ -229,7 +236,7 @@ class LoginFrame(ttk.Frame):
             self.password_visible.set(False)
         else:
             self.password_entry.config(show="")
-            self.eye_button.config(text="👁\u0336") # Eye with combining slash
+            self.eye_button.config(text="👁\u0336")
             self.password_visible.set(True)
 
     def load_saved_credentials(self):
