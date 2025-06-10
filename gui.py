@@ -41,7 +41,17 @@ except ImportError:
     logging.warning("sv-ttk library not found. 'fluent' theme will not be available.")
 
 class ConfigManager:
-    def __init__(self, config_path=resource_path("glpi_config.toml")):
+    def __init__(self, config_path=None):
+        if config_path is None:
+            # Always use the directory where the executable is located, not the bundle directory
+            if getattr(sys, 'frozen', False):
+                # Running as PyInstaller bundle
+                exe_dir = os.path.dirname(sys.executable)
+            else:
+                # Running as script
+                exe_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(exe_dir, "glpi_config.toml")
+        
         self.config_path = Path(config_path)
         self.config = self.load_config()
 
@@ -51,8 +61,12 @@ class ConfigManager:
             try:
                 user_config = toml.load(self.config_path)
                 self._update_dict(default_config, user_config)
+                logging.info(f"Loaded config from: {self.config_path}")
             except Exception as e:
                 logging.error(f"Error loading or parsing config file: {e}")
+        else:
+            logging.info(f"Config file not found, creating new one at: {self.config_path}")
+        
         self.save_config(default_config)
         return default_config
 
@@ -91,10 +105,13 @@ class ConfigManager:
         if config is None: 
             config = self.config
         try:
+            # Ensure the directory exists
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w") as f: 
                 toml.dump(config, f)
+            logging.debug(f"Config saved to: {self.config_path}")
         except Exception as e: 
-            logging.error(f"Error saving config: {e}")
+            logging.error(f"Error saving config to {self.config_path}: {e}")
 
     def _update_dict(self, base, update):
         for k, v in update.items():
@@ -119,7 +136,6 @@ class ConfigManager:
             return datetime.now() < datetime.fromisoformat(self.config["session"]["expires"])
         except: 
             return False
-
 # ThemeManager, CustomCheckbox, and CustomEyeButton classes remain unchanged
 class ThemeManager:
     @staticmethod
@@ -844,8 +860,28 @@ class GLPIGUIApp(tk.Tk):
     def setup_logging(self):
         cfg = self.config_manager.config["logging"]
         level = getattr(logging, cfg["level"].upper(), logging.WARNING)
-        logging.basicConfig(level=level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler(resource_path(cfg["file"])), logging.StreamHandler()])
+        
+        # Use the same directory logic for log files
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle
+            log_dir = os.path.dirname(sys.executable)
+        else:
+            # Running as script
+            log_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        log_file_path = os.path.join(log_dir, cfg["file"])
+        
+        logging.basicConfig(
+            level=level, 
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+            handlers=[
+                logging.FileHandler(log_file_path), 
+                logging.StreamHandler()
+            ]
+        )
         logging.info("Application starting up...")
+        logging.info(f"Config file location: {self.config_manager.config_path}")
+        logging.info(f"Log file location: {log_file_path}")
 
     def switch_frame(self, frame_class):
         if self.current_frame:

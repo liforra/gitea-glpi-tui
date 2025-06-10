@@ -16,7 +16,7 @@ A modern, feature-rich desktop application for interacting with GLPI (IT Asset M
   - Support for hardware details (CPU, GPU, RAM, Storage)
   - Manufacturer and model detection
   - Serial number and location tracking
-  - Direct browser integration - Open newly added computers in GLPI web interface
+  - **Direct browser integration** - Open newly added computers in GLPI web interface
 
 - **Search Functionality**
   - Search computers by serial number
@@ -106,6 +106,7 @@ pip install psutil
 ```
 
 5. **Configure the application:**
+   - Run the application once to generate `glpi_config.toml`
    - Update the `app_token` in `glpi_config.toml`
    - Modify other settings as needed
 
@@ -172,7 +173,7 @@ python main.py
    - Click "Gather System Info" to auto-populate fields
    - Fill in additional details as needed
    - Click "Add Computer" to submit
-   - Click "Open in GLPI" to view the computer in your web browser
+   - **Click "Open in GLPI" to view the computer in your web browser**
 
 4. **Search:**
    - Navigate to the "Search" tab
@@ -193,21 +194,34 @@ pip install pyinstaller
 2. **Build the executable:**
 ```bash
 # Basic one-file executable with assets
-pyinstaller --onefile --windowed --add-data "glpi_config.toml;." --add-data "assets;assets" --name "GLPI-GUI-Client" main.py
+pyinstaller --onefile --windowed --add-data "assets;assets" --name "GLPI-GUI-Client" main.py
 
 # With icon (if you have one)
-pyinstaller --onefile --windowed --icon=icon.ico --add-data "glpi_config.toml;." --add-data "assets;assets" --name "GLPI-GUI-Client" main.py
+pyinstaller --onefile --windowed --icon=icon.ico --add-data "assets;assets" --name "GLPI-GUI-Client" main.py
 
 # For better compatibility, include hidden imports
-pyinstaller --onefile --windowed --add-data "glpi_config.toml;." --add-data "assets;assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --name "GLPI-GUI-Client" main.py
+pyinstaller --onefile --windowed --add-data "assets;assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --name "GLPI-GUI-Client" main.py
 ```
+
+3. **Configuration:**
+   - The executable will create `glpi_config.toml` in the same directory as the executable
+   - Edit this file to set your GLPI app token and other settings
+   - Log files will also be created in the same directory
+
+### Distribution
+
+When distributing your application:
+1. Copy the executable to the target location
+2. The application will automatically create `glpi_config.toml` on first run
+3. Users need to edit the config file to set their GLPI app token
+4. All config changes and session data will be saved alongside the executable
 
 ### Alternative Build Methods
 
 #### Nuitka (High Performance)
 ```bash
 pip install nuitka
-python -m nuitka --onefile --windows-disable-console --enable-plugin=tk-inter --include-data-dir=assets=assets --include-data-files=glpi_config.toml=glpi_config.toml main.py
+python -m nuitka --onefile --windows-disable-console --enable-plugin=tk-inter --include-data-dir=assets=assets main.py
 ```
 
 #### Cython (Compilation)
@@ -226,7 +240,6 @@ This project uses icons from [Flaticon](https://www.flaticon.com/):
 - The eye icons are used under Flaticon's free license with attribution
 - This is compatible with the project's GNU AGPL v3.0 license
 - Icons are included in the `assets/` folder and bundled with the executable
-
 
 ## Troubleshooting
 
@@ -253,6 +266,21 @@ This project uses icons from [Flaticon](https://www.flaticon.com/):
    - Install Pillow: `pip install Pillow`
    - Application will fall back to text icons if images are unavailable
 
+6. **Operating System or Components Not Saved**
+   - The application includes automatic component handling through the GLPI library
+   - If components still don't appear, check GLPI permissions for device management
+   - Verify that the user account has rights to create and link device components
+
+7. **Component Creation Fails**
+   - Ensure your GLPI user has permissions to create Device items (DeviceProcessor, DeviceGraphicCard, etc.)
+   - Check that the manufacturer ID exists in your GLPI instance
+   - Review logs for specific component creation errors
+
+8. **Config File Not Found After Building**
+   - The executable creates the config file in the same directory as the executable
+   - Ensure you have write permissions in the directory where the executable is located
+   - Check the log file for specific error messages about config file creation
+
 ### Build Issues
 
 1. **Missing Dependencies in Executable**
@@ -267,6 +295,11 @@ This project uses icons from [Flaticon](https://www.flaticon.com/):
 3. **Antivirus False Positives**
    - Code sign your executables
    - Submit to antivirus vendors for whitelisting
+
+4. **Config File Issues in Built Executable**
+   - The application automatically creates config files next to the executable
+   - No need to bundle config files during build
+   - Ensure the target directory has write permissions
 
 ## AI Disclaimer
 
