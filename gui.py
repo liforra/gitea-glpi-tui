@@ -70,6 +70,7 @@ class ConfigManager:
                 "theme": "purple",
                 "auto_fill_defaults": True,
                 "auto_gather_system_info": True,
+                "purple_theme_rounded": True,  # New config option
             },
             "fluent_theme_colors": {
                 "mode": "dark", "primary": "#8a2be2", "background": "#201a2b",
@@ -113,7 +114,7 @@ class ThemeManager:
         if theme_name == "fluent" and SV_TTK_AVAILABLE:
             ThemeManager.apply_fluent_theme(root, config)
         elif theme_name == "purple":
-            ThemeManager.apply_purple_theme(root)
+            ThemeManager.apply_purple_theme(root, config)
 
     @staticmethod
     def apply_fluent_theme(root, config):
@@ -130,47 +131,306 @@ class ThemeManager:
         style.configure("TLabelframe.Label", background=bg, foreground=fg)
         style.map("TNotebook.Tab", background=[("selected", primary)])
         root.configure(background=bg)
-
     @staticmethod
-    def apply_purple_theme(root):
+    def apply_purple_theme(root, config):
         style = ttk.Style()
         BG = "#201a2b"
         FG = "#dcd4e8"
         WIDGET_BG = "#302a40"
         PRIMARY = "#8a2be2"
         ACCENT = "#9966cc"
-        BORDER = "#4a445c"
+        DARK_BORDER = "#1a1525"
+        WIDGET_BORDER = "#403750"
+        
+        # Check if rounded theme is enabled
+        rounded = config.get("ui", {}).get("purple_theme_rounded", True)
 
         root.configure(background=BG)
-        style.theme_use('clam')
         
-        style.configure(".", background=BG, foreground=FG, borderwidth=0, font=("Segoe UI", 10))
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=FG)
+        # Use 'alt' theme as base and completely override it
+        style.theme_use('alt')
         
-        style.configure("TButton", background=WIDGET_BG, foreground=FG, bordercolor=BORDER, padding=8, font=("Segoe UI", 9, "bold"))
+        # Configure all possible style elements to prevent white borders
+        style.configure(".", 
+            background=BG, 
+            foreground=FG, 
+            troughcolor=BG,
+            bordercolor=DARK_BORDER,
+            lightcolor=DARK_BORDER,
+            darkcolor=DARK_BORDER,
+            focuscolor=ACCENT,
+            selectbackground=ACCENT,
+            selectforeground=FG,
+            font=("Segoe UI", 10)
+        )
+        
+        # Frame styling
+        style.configure("TFrame", 
+            background=BG,
+            borderwidth=0,
+            relief="flat"
+        )
+        
+        # Label styling
+        style.configure("TLabel", 
+            background=BG, 
+            foreground=FG
+        )
+        
+        # Button styling - completely custom
+        style.configure("TButton",
+            background=WIDGET_BG,
+            foreground=FG,
+            borderwidth=0 if rounded else 1,
+            bordercolor=WIDGET_BORDER,
+            lightcolor=WIDGET_BG,
+            darkcolor=WIDGET_BG,
+            relief="flat",
+            padding=(8, 6),
+            font=("Segoe UI", 9, "bold")
+        )
         style.map("TButton",
-            background=[("active", ACCENT), ("pressed", ACCENT)],
-            bordercolor=[("active", ACCENT)]
+            background=[
+                ("active", ACCENT),
+                ("pressed", ACCENT),
+                ("focus", WIDGET_BG)
+            ],
+            foreground=[
+                ("active", "white"),
+                ("pressed", "white")
+            ],
+            bordercolor=[
+                ("active", ACCENT if not rounded else WIDGET_BG),
+                ("pressed", ACCENT if not rounded else WIDGET_BG)
+            ],
+            lightcolor=[
+                ("active", ACCENT),
+                ("pressed", ACCENT)
+            ],
+            darkcolor=[
+                ("active", ACCENT),
+                ("pressed", ACCENT)
+            ]
         )
         
-        style.configure("TEntry", fieldbackground=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertcolor=FG, borderwidth=1, padding=5)
-        style.map("TEntry", bordercolor=[("focus", ACCENT)])
+        # Entry styling - aggressive override
+        style.configure("TEntry",
+            fieldbackground=WIDGET_BG,
+            background=WIDGET_BG,
+            foreground=FG,
+            borderwidth=0 if rounded else 1,
+            bordercolor=WIDGET_BORDER,
+            lightcolor=WIDGET_BORDER,
+            darkcolor=WIDGET_BORDER,
+            insertcolor=FG,
+            selectbackground=ACCENT,
+            selectforeground="white",
+            relief="solid",
+            padding=(8, 6)
+        )
+        style.map("TEntry",
+            fieldbackground=[
+                ("focus", WIDGET_BG),
+                ("!focus", WIDGET_BG)
+            ],
+            bordercolor=[
+                ("focus", ACCENT),
+                ("!focus", WIDGET_BORDER)
+            ],
+            lightcolor=[
+                ("focus", ACCENT),
+                ("!focus", WIDGET_BORDER)
+            ],
+            darkcolor=[
+                ("focus", ACCENT),
+                ("!focus", WIDGET_BORDER)
+            ]
+        )
         
-        style.configure("TCheckbutton", background=BG, foreground=FG, indicatorbackground=WIDGET_BG, indicatorcolor=WIDGET_BG)
+        
+        # Checkbutton styling
+# Checkbutton styling - more aggressive fix
+        style.configure("TCheckbutton",
+            background=BG,
+            foreground=FG,
+            focuscolor="none",
+            borderwidth=0,
+            relief="flat",
+            indicatorsize=14,
+            indicatorbackground=WIDGET_BG,
+            indicatorforeground=WIDGET_BG,
+            indicatorcolor=WIDGET_BG,
+            indicatorrelief="flat",
+            indicatorborderwidth=0,
+            highlightthickness=0
+        )
         style.map("TCheckbutton",
-            background=[("active", BG)],
-            foreground=[("active", ACCENT)],
-            indicatorbackground=[("selected", PRIMARY), ("pressed", ACCENT)],
-            indicatorcolor=[("selected", PRIMARY), ("pressed", ACCENT)]
+            background=[
+                ("active", BG),
+                ("pressed", BG),
+                ("focus", BG),
+                ("!focus", BG)
+            ],
+            foreground=[
+                ("active", ACCENT),
+                ("!active", FG)
+            ],
+            indicatorbackground=[
+                ("selected", PRIMARY),
+                ("pressed", ACCENT),
+                ("active", WIDGET_BG),
+                ("!selected", WIDGET_BG)
+            ],
+            indicatorcolor=[
+                ("selected", "white"),
+                ("pressed", "white"),
+                ("!selected", WIDGET_BG)
+            ],
+            indicatorforeground=[
+                ("selected", "white"),
+                ("pressed", "white"),
+                ("!selected", WIDGET_BG)
+            ]
         )
         
-        style.configure("ScrolledText", background=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertbackground=FG)
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=BG, foreground=FG, padding=[10, 5], borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", PRIMARY)], foreground=[("selected", "white")])
-        style.configure("TLabelframe", background=BG, bordercolor=BORDER, padding=10)
-        style.configure("TLabelframe.Label", background=BG, foreground=ACCENT, font=("Segoe UI", 11, "bold"))
+        # Notebook styling
+        style.configure("TNotebook",
+            background=BG,
+            borderwidth=0,
+            tabmargins=[0, 0, 0, 0]
+        )
+        style.configure("TNotebook.Tab",
+            background=BG,
+            foreground=FG,
+            padding=[15, 8],
+            borderwidth=0,
+            relief="flat",
+            focuscolor="none"
+        )
+        style.map("TNotebook.Tab",
+            background=[
+                ("selected", PRIMARY),
+                ("!selected", BG)
+            ],
+            foreground=[
+                ("selected", "white"),
+                ("!selected", FG)
+            ]
+        )
+        
+        # LabelFrame styling
+        style.configure("TLabelframe",
+            background=BG,
+            borderwidth=0 if rounded else 1,
+            bordercolor=WIDGET_BORDER,
+            lightcolor=WIDGET_BORDER,
+            darkcolor=WIDGET_BORDER,
+            relief="flat",
+            padding=15
+        )
+        style.configure("TLabelframe.Label",
+            background=BG,
+            foreground=ACCENT,
+            font=("Segoe UI", 11, "bold")
+        )
+        
+        # Additional aggressive overrides for any remaining white elements
+        style.configure("TScrollbar",
+            background=WIDGET_BG,
+            troughcolor=BG,
+            bordercolor=WIDGET_BORDER,
+            lightcolor=WIDGET_BG,
+            darkcolor=WIDGET_BG,
+            arrowcolor=FG
+        )
+        
+        # Override any remaining problematic elements
+        for widget_type in ["TCombobox", "TSpinbox", "TScale", "TProgressbar"]:
+            try:
+                style.configure(widget_type,
+                    background=WIDGET_BG,
+                    foreground=FG,
+                    bordercolor=WIDGET_BORDER,
+                    lightcolor=WIDGET_BORDER,
+                    darkcolor=WIDGET_BORDER,
+                    troughcolor=BG,
+                    selectbackground=ACCENT
+                )
+            except:
+                pass  # Some widgets might not exist or support all options
+class CustomCheckbox(tk.Frame):
+    def __init__(self, parent, text, variable, **kwargs):
+        super().__init__(parent, bg="#201a2b", **kwargs)
+        self.variable = variable
+        self.text = text
+        
+        # Create the checkbox canvas
+        self.checkbox = tk.Canvas(
+            self, 
+            width=16, 
+            height=16, 
+            bg="#201a2b", 
+            highlightthickness=0,
+            cursor="hand2"
+        )
+        self.checkbox.pack(side=tk.LEFT, padx=(0, 8))
+        
+        # Create the label
+        self.label = tk.Label(
+            self,
+            text=text,
+            bg="#201a2b",
+            fg="#dcd4e8",
+            font=("Segoe UI", 10),
+            cursor="hand2"
+        )
+        self.label.pack(side=tk.LEFT)
+        
+        # Bind click events
+        self.checkbox.bind("<Button-1>", self._toggle)
+        self.label.bind("<Button-1>", self._toggle)
+        self.bind("<Button-1>", self._toggle)
+        
+        # Initial draw
+        self._draw_checkbox()
+        
+        # Trace variable changes
+        self.variable.trace_add("write", lambda *args: self._draw_checkbox())
+    
+    def _toggle(self, event=None):
+        self.variable.set(not self.variable.get())
+    
+    def _draw_checkbox(self):
+        self.checkbox.delete("all")
+        
+        # Colors
+        bg_color = "#302a40"
+        border_color = "#8a2be2" if self.variable.get() else "#4a445c"
+        check_color = "#ffffff"
+        
+        # Draw the checkbox background
+        self.checkbox.create_rectangle(
+            1, 1, 15, 15,
+            fill=bg_color,
+            outline=border_color,
+            width=2
+        )
+        
+        # Draw checkmark if checked
+        if self.variable.get():
+            # Draw a checkmark
+            self.checkbox.create_line(
+                4, 8, 7, 11,
+                fill=check_color,
+                width=2,
+                capstyle=tk.ROUND
+            )
+            self.checkbox.create_line(
+                7, 11, 12, 4,
+                fill=check_color,
+                width=2,
+                capstyle=tk.ROUND
+            )
 
 class LoginFrame(ttk.Frame):
     def __init__(self, parent, controller):
@@ -197,7 +457,7 @@ class LoginFrame(ttk.Frame):
         
         self.password_visible = tk.BooleanVar(value=False)
         
-        # --- NEW: Using a styled tk.Button for a flat, iconic look ---
+        # Updated eye button styling for rounded theme
         self.eye_button = tk.Button(
             password_frame,
             text="👁",
@@ -205,18 +465,22 @@ class LoginFrame(ttk.Frame):
             borderwidth=0,
             relief="flat",
             background="#302a40", # WIDGET_BG
-            activebackground="#201a2b", # BG
+            activebackground="#9966cc", # ACCENT
             foreground="#dcd4e8", # FG
-            activeforeground="#9966cc", # ACCENT
-            font=("Segoe UI", 12)
+            activeforeground="#ffffff",
+            font=("Segoe UI", 12),
+            highlightthickness=0  # Remove focus border
         )
         self.eye_button.pack(side=tk.LEFT, padx=(5, 0))
         
+        # Custom checkboxes
         self.remember_var = tk.BooleanVar(value=self.controller.config_manager.config["authentication"]["remember_session"])
-        ttk.Checkbutton(frame, text="Remember session", variable=self.remember_var).pack(anchor=tk.W)
+        self.remember_checkbox = CustomCheckbox(frame, "Remember session", self.remember_var)
+        self.remember_checkbox.pack(anchor=tk.W, pady=(10, 5))
         
         self.verify_ssl_var = tk.BooleanVar(value=self.controller.config_manager.config["glpi"]["verify_ssl"])
-        ttk.Checkbutton(frame, text="Verify SSL", variable=self.verify_ssl_var).pack(anchor=tk.W)
+        self.verify_ssl_checkbox = CustomCheckbox(frame, "Verify SSL", self.verify_ssl_var)
+        self.verify_ssl_checkbox.pack(anchor=tk.W, pady=(0, 10))
         
         button_frame = ttk.Frame(frame)
         button_frame.pack(pady=20)
