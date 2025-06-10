@@ -36,47 +36,30 @@ def _run_command(command):
         return None
 
 def _round_storage_gb(gib):
-    """
-    Rounds the OS-reported Gibibyte (GiB) size to the nearest
-    common marketing Gigabyte (GB) size.
-    """
-    if not gib:
-        return 0
-    
-    # This factor converts from GiB (2^30) to an estimated marketing GB (10^9)
-    # A 256 GB drive is ~238.4 GiB. 238.4 * 1.0737... ≈ 256.
+    """Rounds the OS-reported Gibibyte (GiB) size to the nearest common marketing Gigabyte (GB) size."""
+    if not gib: return 0
     estimated_marketing_gb = gib * (1024**3 / 1000**3)
-    
     sizes = [120, 128, 240, 250, 256, 480, 500, 512, 960, 1000, 1024, 2048, 4096]
-    
-    # Find the smallest marketing size that is >= our estimated size
     for size in sizes:
         if size >= estimated_marketing_gb:
             return size
-            
-    # If it's larger than any known size, return the rounded actual size
     return round(gib)
-
 
 def _clean_processor_name(name):
     """Extracts the core model number from a full CPU brand string."""
-    if not name:
-        return "Unknown"
+    if not name: return "Unknown"
     match = re.search(
         r'(i[3579]-\w+|Ryzen\s\d\s\w+|Xeon\s\w-\w+|Pentium\s\w+|Celeron\s\w+)',
-        name,
-        re.IGNORECASE
+        name, re.IGNORECASE
     )
-    if match:
-        return match.group(1).strip()
+    if match: return match.group(1).strip()
     name = re.sub(r'Intel\(R\)\sCore\(TM\)\s', '', name)
     name = re.sub(r'\sCPU\s@\s.*', '', name)
     return name.strip()
 
 def _clean_gpu_name(name):
     """Extracts the core model name from a full GPU brand string."""
-    if not name:
-        return "Unknown"
+    if not name: return "Unknown"
     cleaned_name = re.sub(r'\((R|TM)\)', '', name).strip()
     prefixes = ["Intel", "NVIDIA", "AMD"]
     for prefix in prefixes:
@@ -84,6 +67,16 @@ def _clean_gpu_name(name):
             cleaned_name = cleaned_name[len(prefix):].strip()
             break
     return cleaned_name if cleaned_name else name
+
+def _clean_manufacturer_name(name):
+    """Removes common corporate suffixes from a manufacturer name."""
+    if not name: return "Unknown"
+    # List of suffixes to remove, case-insensitive.
+    # The regex looks for these words at the end of the string, preceded by optional space/comma.
+    suffixes = ["Inc", "Corporation", "Corp", "Limited", "Ltd", "Company"]
+    pattern = r'[\s,]*(' + '|'.join(suffixes) + r')\.?$'
+    cleaned_name = re.sub(pattern, '', name, flags=re.IGNORECASE)
+    return cleaned_name.strip()
 
 class SystemInfoGatherer:
     def __init__(self):
@@ -125,14 +118,17 @@ class SystemInfoGatherer:
         return "Unknown"
 
     def get_manufacturer(self):
+        """Get the cleaned manufacturer name."""
+        full_name = "Unknown"
         if self.system == "Windows" and WMI_AVAILABLE:
             try:
-                return wmi.WMI().Win32_ComputerSystem()[0].Manufacturer.strip()
+                full_name = wmi.WMI().Win32_ComputerSystem()[0].Manufacturer
             except Exception as e:
                 log.warning(f"WMI failed to get manufacturer: {e}")
         elif self.system == "Linux":
-            return _run_command(['sudo', 'dmidecode', '-s', 'system-manufacturer'])
-        return "Unknown"
+            full_name = _run_command(['sudo', 'dmidecode', '-s', 'system-manufacturer'])
+        
+        return _clean_manufacturer_name(full_name)
 
     def get_model(self):
         if self.system == "Windows" and WMI_AVAILABLE:
@@ -153,7 +149,6 @@ class SystemInfoGatherer:
         return platform.release()
 
     def get_processor(self):
-        """Get the cleaned processor brand name."""
         full_name = "Unknown"
         if self.system == "Windows" and WMI_AVAILABLE:
             try:
@@ -169,7 +164,6 @@ class SystemInfoGatherer:
         return _clean_processor_name(full_name)
 
     def get_gpu(self):
-        """Get the cleaned primary GPU name."""
         full_name = "Unknown"
         if self.system == "Windows" and WMI_AVAILABLE:
             try:
@@ -188,7 +182,6 @@ class SystemInfoGatherer:
         return _clean_gpu_name(full_name)
 
     def get_ram_info(self):
-        """Get total RAM size and type (e.g., DDR4 16 GB)."""
         total_gb = 0
         ram_type = ""
         if self.system == "Windows" and WMI_AVAILABLE:
@@ -222,12 +215,10 @@ class SystemInfoGatherer:
         return f"{ram_type} {total_gb} GB".strip() if total_gb else "Unknown"
 
     def get_storage_info(self):
-        """Get primary storage size, rounded to marketing value."""
         if psutil:
             try:
                 mount_point = 'C:\\' if self.system == "Windows" else '/'
                 usage = psutil.disk_usage(mount_point)
-                # Get size in GiB
                 actual_gib = usage.total / (1024**3)
                 rounded_gb = _round_storage_gb(actual_gib)
                 return f"SSD {rounded_gb} GB"

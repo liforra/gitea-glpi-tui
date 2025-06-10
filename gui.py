@@ -11,15 +11,20 @@ import json
 import sys
 
 def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
+# Import your existing GLPI library by its actual filename
 import glpi
+
+# Import system info gatherer
 from system_info import SystemInfoGatherer
 
+# Import the theme library if it exists
 try:
     import sv_ttk
     SV_TTK_AVAILABLE = True
@@ -46,7 +51,7 @@ class ConfigManager:
 
     def _get_default_config(self):
         return {
-            "application": {"name": "GLPI GUI Client", "version": "6.0.0"},
+            "application": {"name": "GLPI GUI Client", "version": "6.3.0"},
             "logging": {"level": "WARNING", "file": "glpi_gui.log"},
             "authentication": {
                 "remember_session": True,
@@ -132,9 +137,9 @@ class ThemeManager:
         BG = "#201a2b"
         FG = "#dcd4e8"
         WIDGET_BG = "#302a40"
-        PRIMARY = "#8a2be2" # BlueViolet
-        ACCENT = "#9966cc" # Amethyst
-        BORDER = "#4a445c"
+        PRIMARY = "#8a2be2" # BlueViolet for selections
+        ACCENT = "#9966cc" # Amethyst for hover/focus
+        BORDER = "#4a445c" # Muted border
 
         root.configure(background=BG)
         style.theme_use('clam')
@@ -143,21 +148,33 @@ class ThemeManager:
         style.configure("TFrame", background=BG)
         style.configure("TLabel", background=BG, foreground=FG)
         
-        style.configure("TButton", background=WIDGET_BG, foreground=FG, bordercolor=BORDER, lightcolor=WIDGET_BG, darkcolor=WIDGET_BG, padding=8, font=("Segoe UI", 9, "bold"))
-        style.map("TButton", background=[("active", ACCENT), ("pressed", ACCENT)])
+        style.configure("TButton", background=WIDGET_BG, foreground=FG, bordercolor=BORDER, padding=8, font=("Segoe UI", 9, "bold"))
+        style.map("TButton",
+            background=[("active", ACCENT), ("pressed", ACCENT)],
+            bordercolor=[("active", ACCENT)]
+        )
         
-        style.configure("TEntry", fieldbackground=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertcolor=FG)
+        # --- FIX for Entry Box Border, Padding, and Focus ---
+        style.configure("TEntry", fieldbackground=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertcolor=FG, borderwidth=1, padding=5)
+        style.map("TEntry", bordercolor=[("focus", ACCENT)])
+        
+        # --- FIX for Checkbutton Background and Hover ---
+        style.configure("TCheckbutton", background=BG, foreground=FG, indicatorbackground=WIDGET_BG, indicatorcolor=WIDGET_BG)
+        style.map("TCheckbutton",
+            background=[("active", BG)],
+            foreground=[("active", ACCENT)],
+            indicatorbackground=[("selected", PRIMARY), ("pressed", ACCENT)],
+            indicatorcolor=[("selected", PRIMARY), ("pressed", ACCENT)]
+        )
+        
         style.configure("ScrolledText", background=WIDGET_BG, foreground=FG, bordercolor=BORDER, insertbackground=FG)
-        
         style.configure("TNotebook", background=BG, borderwidth=0)
         style.configure("TNotebook.Tab", background=BG, foreground=FG, padding=[10, 5], borderwidth=0)
         style.map("TNotebook.Tab", background=[("selected", PRIMARY)], foreground=[("selected", "white")])
-        
         style.configure("TLabelframe", background=BG, bordercolor=BORDER, padding=10)
         style.configure("TLabelframe.Label", background=BG, foreground=ACCENT, font=("Segoe UI", 11, "bold"))
 
 class LoginFrame(ttk.Frame):
-    # This class is unchanged but included for completeness.
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
@@ -166,22 +183,34 @@ class LoginFrame(ttk.Frame):
         frame.pack(expand=True)
         
         ttk.Label(frame, text="GLPI Authentication", font=("Segoe UI", 14, "bold")).pack(pady=(0, 20))
+        
+        # Username
         ttk.Label(frame, text="Username:").pack(anchor=tk.W)
         self.username_var = tk.StringVar()
         self.username_entry = ttk.Entry(frame, textvariable=self.username_var, width=40)
         self.username_entry.pack(fill=tk.X, pady=(0, 10))
         
+        # --- NEW: Password Frame with Eye Button ---
         ttk.Label(frame, text="Password:").pack(anchor=tk.W)
-        self.password_var = tk.StringVar()
-        self.password_entry = ttk.Entry(frame, textvariable=self.password_var, show="*", width=40)
-        self.password_entry.pack(fill=tk.X, pady=(0, 10))
+        password_frame = ttk.Frame(frame)
+        password_frame.pack(fill=tk.X, pady=(0, 10))
         
+        self.password_var = tk.StringVar()
+        self.password_entry = ttk.Entry(password_frame, textvariable=self.password_var, show="*", width=40)
+        self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.password_visible = tk.BooleanVar(value=False)
+        self.eye_button = ttk.Button(password_frame, text="👁", command=self._toggle_password_visibility, width=3)
+        self.eye_button.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Checkboxes
         self.remember_var = tk.BooleanVar(value=self.controller.config_manager.config["authentication"]["remember_session"])
         ttk.Checkbutton(frame, text="Remember session", variable=self.remember_var).pack(anchor=tk.W)
         
         self.verify_ssl_var = tk.BooleanVar(value=self.controller.config_manager.config["glpi"]["verify_ssl"])
         ttk.Checkbutton(frame, text="Verify SSL", variable=self.verify_ssl_var).pack(anchor=tk.W)
         
+        # Login/Exit Buttons
         button_frame = ttk.Frame(frame)
         button_frame.pack(pady=20)
         ttk.Button(button_frame, text="Login", command=self.login).pack(side=tk.LEFT, padx=(0, 10))
@@ -192,6 +221,16 @@ class LoginFrame(ttk.Frame):
         
         self.username_entry.focus()
         self.load_saved_credentials()
+
+    def _toggle_password_visibility(self):
+        if self.password_visible.get():
+            self.password_entry.config(show="*")
+            self.eye_button.config(text="👁")
+            self.password_visible.set(False)
+        else:
+            self.password_entry.config(show="")
+            self.eye_button.config(text="👁\u0336") # Eye with combining slash
+            self.password_visible.set(True)
 
     def load_saved_credentials(self):
         auth_config = self.controller.config_manager.config["authentication"]
@@ -208,6 +247,7 @@ class LoginFrame(ttk.Frame):
         )
 
 class AddComputerFrame(ttk.Frame):
+    # This class is unchanged but included for completeness.
     def __init__(self, parent, controller):
         super().__init__(parent, padding=10)
         self.controller = controller
@@ -219,26 +259,17 @@ class AddComputerFrame(ttk.Frame):
             self.gather_system_info()
     
     def setup_ui(self):
-        canvas = tk.Canvas(self, highlightthickness=0, background=self.winfo_toplevel().cget('bg'))
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        content_frame = ttk.Frame(scrollable_frame, padding=10)
-        content_frame.pack(fill="x", expand=True)
-
-        toolbar_frame = ttk.Frame(content_frame)
-        toolbar_frame.pack(fill=tk.X, pady=(0, 20))
+        toolbar_frame = ttk.Frame(self)
+        toolbar_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Button(toolbar_frame, text="🔄 Gather System Info", command=self.gather_system_info).pack(side=tk.LEFT)
-        self.status_label = ttk.Label(toolbar_frame, text="Ready", foreground="green")
-        self.status_label.pack(side=tk.RIGHT)
-        
+        self.status_label = ttk.Label(self, text="Ready", foreground="green")
+        self.status_label.pack(in_=toolbar_frame, side=tk.RIGHT)
+
+        content_frame = ttk.Frame(self)
+        content_frame.pack(fill="both", expand=True)
+        content_frame.grid_columnconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(1, weight=1)
+
         basic_fields = {
             "Name": "name", "Serial Number": "serial", "Location": "location",
             "Model": "model", "Manufacturer": "manufacturer"
@@ -249,15 +280,15 @@ class AddComputerFrame(ttk.Frame):
         }
         
         basic_lf = ttk.LabelFrame(content_frame, text="Basic Information")
-        basic_lf.pack(fill="x", expand=True, pady=(0, 15))
+        basic_lf.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="nsew")
         self.basic_vars = self._create_fields(basic_lf, basic_fields)
 
         hardware_lf = ttk.LabelFrame(content_frame, text="Hardware")
-        hardware_lf.pack(fill="x", expand=True)
+        hardware_lf.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="nsew")
         self.hardware_vars = self._create_fields(hardware_lf, hardware_fields)
         
-        button_frame = ttk.Frame(content_frame)
-        button_frame.pack(fill=tk.X, pady=(20, 0))
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill=tk.X, pady=(15, 0))
         ttk.Button(button_frame, text="Add Computer", command=self.add_computer).pack(side=tk.RIGHT, padx=(10, 0))
         ttk.Button(button_frame, text="Clear Form", command=self.clear_form).pack(side=tk.RIGHT)
 
@@ -322,6 +353,7 @@ class AddComputerFrame(ttk.Frame):
         self.load_defaults()
 
 class SearchFrame(ttk.Frame):
+    # This class is unchanged but included for completeness.
     def __init__(self, parent, controller):
         super().__init__(parent, padding=10)
         self.controller = controller
@@ -372,6 +404,7 @@ class SearchFrame(ttk.Frame):
         self.results_text.config(state="disabled", cursor="")
 
 class MainFrame(ttk.Frame):
+    # This class is unchanged but included for completeness.
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
@@ -394,6 +427,7 @@ class MainFrame(ttk.Frame):
         notebook.add(search_tab, text="Search")
 
 class GLPIGUIApp(tk.Tk):
+    # This class is unchanged but included for completeness.
     def __init__(self):
         super().__init__()
         self.config_manager = ConfigManager()
@@ -482,7 +516,7 @@ class GLPIGUIApp(tk.Tk):
             self.config_manager.update_session(token, username)
         
         self.title(self.config_manager.config["application"]["name"])
-        self.geometry("800x600")
+        self.geometry("850x500")
         self.switch_frame(MainFrame)
 
     def logout(self):
