@@ -5,6 +5,7 @@ import logging
 import re
 import os
 from pathlib import Path
+import tempfile
 
 # Attempt to import optional libraries
 try:
@@ -29,7 +30,13 @@ log = logging.getLogger(__name__)
 def _run_command(command):
     """Helper to run a command and capture output."""
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=15)
+        # Hide the console window for subprocess on Windows
+        startupinfo = None
+        if platform.system() == "Windows":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=20, startupinfo=startupinfo)
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         log.warning(f"Command '{' '.join(command)}' failed: {e}")
@@ -124,7 +131,7 @@ class SystemInfoGatherer:
 
     def gather_all_info(self):
         """Gather all system information using the best available methods."""
-        total_steps = 10
+        total_steps = 13
         
         if self.system == "Windows":
             pythoncom.CoInitializeEx(0)
@@ -139,27 +146,36 @@ class SystemInfoGatherer:
         self._update_status("Retrieving serial number...", 3, total_steps)
         self.info["serial"] = self.get_serial_number()
         
-        self._update_status("Detecting manufacturer...", 4, total_steps)
+        self._update_status("Detecting computer type...", 4, total_steps)
+        self.info["computer_type"] = self.get_computer_type()
+        
+        self._update_status("Detecting manufacturer...", 5, total_steps)
         self.info["manufacturer"] = self.get_manufacturer()
         
-        self._update_status("Getting system model...", 5, total_steps)
+        self._update_status("Getting system model...", 6, total_steps)
         self.info["model"] = self.get_model()
         
-        self._update_status("Identifying operating system...", 6, total_steps)
+        self._update_status("Identifying operating system...", 7, total_steps)
         self.info["os"] = self.get_operating_system()
         
-        self._update_status("Getting OS version...", 7, total_steps)
+        self._update_status("Getting OS version...", 8, total_steps)
         self.info["os_version"] = self.get_os_version()
         
-        self._update_status("Detecting processor...", 8, total_steps)
+        self._update_status("Getting OS edition...", 9, total_steps)
+        self.info["os_edition"] = self.get_os_edition()
+        
+        self._update_status("Detecting processor...", 10, total_steps)
         self.info["processor"] = self.get_processor()
         
-        self._update_status("Scanning graphics cards...", 9, total_steps)
+        self._update_status("Scanning graphics cards...", 11, total_steps)
         self.info["gpu"] = self.get_gpu()
         
-        self._update_status("Analyzing memory and storage...", 10, total_steps)
+        self._update_status("Analyzing memory and storage...", 12, total_steps)
         self.info["ram"] = self.get_ram_info()
         self.info["hdd"] = self.get_storage_info()
+        
+        self._update_status("Checking battery health...", 13, total_steps)
+        self.info["battery_health"] = self.get_battery_health()
         
         self._update_status("System information gathering completed successfully!")
         log.info("System information gathering complete.")
@@ -180,6 +196,69 @@ class SystemInfoGatherer:
             self._update_status("Running dmidecode for serial number...")
             return _run_command(['sudo', 'dmidecode', '-s', 'system-serial-number'])
         return "Unknown"
+
+    def get_computer_type(self):
+        """Detect if the computer is a Desktop or Laptop."""
+        if self.system == "Windows" and WMI_AVAILABLE:
+            try:
+                self._update_status("Querying WMI for computer type...")
+                # Check chassis type via WMI
+                chassis_types = wmi.WMI().Win32_SystemEnclosure()
+                for chassis in chassis_types:
+                    if chassis.ChassisTypes:
+                        chassis_type = chassis.ChassisTypes[0]
+                        # SMBIOS chassis type codes:
+                        # 8, 9, 10, 14 = Laptop/Portable
+                        # 3, 4, 5, 6, 7, 15, 16 = Desktop/Tower
+                        if chassis_type in [8, 9, 10, 14]:
+                            return "Laptop"
+                        elif chassis_type in [3, 4, 5, 6, 7, 15, 16]:
+                            return "Desktop"
+                
+                # Fallback: Check for battery presence
+                batteries = wmi.WMI().Win32_Battery()
+                if batteries:
+                    return "Laptop"
+                else:
+                    return "Desktop"
+                    
+            except Exception as e:
+                log.warning(f"WMI computer type detection failed: {e}")
+                self._update_status("WMI query failed for computer type")
+        
+        elif self.system == "Linux":
+            try:
+                self._update_status("Running dmidecode for computer type...")
+                # Check chassis type via dmidecode
+                output = _run_command(['sudo', 'dmidecode', '-s', 'chassis-type'])
+                if output:
+                    chassis_type = output.lower().strip()
+                    laptop_types = ['laptop', 'notebook', 'portable', 'sub notebook', 'handheld']
+                    desktop_types = ['desktop', 'tower', 'mini tower', 'space-saving', 'pizza box', 'mini', 'stick']
+                    
+                    if any(ltype in chassis_type for ltype in laptop_types):
+                        return "Laptop"
+                    elif any(dtype in chassis_type for dtype in desktop_types):
+                        return "Desktop"
+                
+                # Fallback: Check for battery in /sys/class/power_supply
+                try:
+                    base_path = "/sys/class/power_supply"
+                    if os.path.exists(base_path):
+                        batteries = [b for b in os.listdir(base_path) if b.startswith("BAT")]
+                        if batteries:
+                            return "Laptop"
+                        else:
+                            return "Desktop"
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                log.warning(f"Linux computer type detection failed: {e}")
+                self._update_status("dmidecode failed for computer type")
+        
+        # Final fallback: assume Desktop if we can't determine
+        return "Desktop"
 
     def get_manufacturer(self):
         """Get the cleaned manufacturer name."""
@@ -229,6 +308,17 @@ class SystemInfoGatherer:
             return self._get_linux_version()
         else:
             return platform.release()
+
+    def get_os_edition(self):
+        """Get the operating system edition (Pro, Home, Enterprise, etc.)"""
+        if self.system == "Windows":
+            self._update_status("Detecting Windows edition...")
+            return self._get_windows_edition_detailed()
+        elif self.system == "Linux":
+            self._update_status("Detecting Linux edition...")
+            return self._get_linux_edition()
+        else:
+            return "Unknown"
 
     # --- Windows helpers ---
 
@@ -329,6 +419,52 @@ class SystemInfoGatherer:
         # Last fallback
         return platform.release()
 
+    def _get_windows_edition_detailed(self):
+        """Get detailed Windows edition information."""
+        try:
+            self._update_status("Running systeminfo for Windows edition...")
+            output = subprocess.check_output("systeminfo", shell=True, text=True, encoding="utf-8", errors="ignore")
+            match = re.search(r"OS Name:\s*(.*)", output)
+            if match:
+                name = match.group(1).strip()
+                # Extract edition (Pro, Home, Enterprise, etc.)
+                if "Pro" in name:
+                    return "Pro"
+                elif "Home" in name:
+                    return "Home"
+                elif "Enterprise" in name:
+                    return "Enterprise"
+                elif "Education" in name:
+                    return "Education"
+                elif "Server" in name:
+                    return "Server"
+        except Exception:
+            self._update_status("systeminfo failed for edition, trying registry...")
+        
+        # Try registry
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+                try:
+                    edition_id, _ = winreg.QueryValueEx(key, "EditionID")
+                    return edition_id
+                except FileNotFoundError:
+                    pass
+                try:
+                    product_name, _ = winreg.QueryValueEx(key, "ProductName")
+                    if "Pro" in product_name:
+                        return "Pro"
+                    elif "Home" in product_name:
+                        return "Home"
+                    elif "Enterprise" in product_name:
+                        return "Enterprise"
+                except FileNotFoundError:
+                    pass
+        except Exception:
+            pass
+        
+        return "Unknown"
+
     # --- Linux helpers ---
 
     def _get_linux_distro(self):
@@ -371,6 +507,38 @@ class SystemInfoGatherer:
             self._update_status("Could not determine Linux version")
         return platform.release()
 
+    def _get_linux_edition(self):
+        """Get Linux edition/variant information."""
+        try:
+            # Check for specific editions in /etc/os-release
+            with open("/etc/os-release") as f:
+                content = f.read()
+                if "VARIANT=" in content:
+                    match = re.search(r'VARIANT="([^"]*)"', content)
+                    if match:
+                        return match.group(1)
+                if "VARIANT_ID=" in content:
+                    match = re.search(r'VARIANT_ID="?([^"\n]*)"?', content)
+                    if match:
+                        return match.group(1)
+        except Exception:
+            pass
+        
+        # Check for common Linux editions
+        try:
+            with open("/etc/os-release") as f:
+                content = f.read().lower()
+                if "server" in content:
+                    return "Server"
+                elif "desktop" in content:
+                    return "Desktop"
+                elif "workstation" in content:
+                    return "Workstation"
+        except Exception:
+            pass
+        
+        return "Desktop"  # Default for Linux
+
     def get_processor(self):
         full_name = "Unknown"
         if self.system == "Windows" and WMI_AVAILABLE:
@@ -378,8 +546,7 @@ class SystemInfoGatherer:
                 self._update_status("Querying WMI for processor information...")
                 full_name = wmi.WMI().Win32_Processor()[0].Name.strip()
             except Exception as e:
-                log.warning(f"WMI failed to get CPU name: {e}")
-                self._update_status("WMI processor query failed")
+                log.warning(f"WMI processor query failed: {e}")
         elif self.system == "Linux":
             self._update_status("Running lscpu for processor information...")
             output = _run_command(['lscpu'])
@@ -401,8 +568,7 @@ class SystemInfoGatherer:
                     if gpu.Name:
                         gpus.append(gpu.Name.strip())
             except Exception as e:
-                log.warning(f"WMI failed to get GPU names: {e}")
-                self._update_status("WMI graphics query failed")
+                log.warning(f"WMI graphics query failed: {e}")
         elif self.system == "Linux":
             self._update_status("Running lspci for graphics information...")
             output = _run_command(['lspci'])
@@ -417,14 +583,12 @@ class SystemInfoGatherer:
             return "Unknown"
         
         self._update_status(f"Found {len(gpus)} graphics adapter(s), filtering...")
-        # Filter out virtual/fake graphics adapters
         filtered_gpus = self._filter_virtual_gpus(gpus)
         
         if not filtered_gpus:
             self._update_status("No physical graphics cards found after filtering")
             return "Unknown"
         
-        # Prioritize dedicated graphics cards over integrated ones
         self._update_status("Prioritizing dedicated graphics cards...")
         prioritized_gpu = self._prioritize_gpu(filtered_gpus)
         
@@ -433,32 +597,13 @@ class SystemInfoGatherer:
     def _filter_virtual_gpus(self, gpu_list):
         """Filter out virtual, remote, and fake graphics adapters."""
         virtual_keywords = [
-            "spacedesk",
-            "parsec",
-            "teamviewer",
-            "vnc",
-            "rdp",
-            "remote",
-            "virtual",
-            "microsoft basic display adapter",
-            "microsoft basic render driver",
-            "generic pnp monitor",
-            "standard vga",
-            "citrix",
-            "vmware",
-            "virtualbox",
-            "hyper-v",
-            "qemu",
-            "parallels"
+            "spacedesk", "parsec", "teamviewer", "vnc", "rdp", "remote", "virtual",
+            "microsoft basic display adapter", "microsoft basic render driver",
+            "generic pnp monitor", "standard vga", "citrix", "vmware", "virtualbox",
+            "hyper-v", "qemu", "parallels"
         ]
         
-        filtered = []
-        for gpu in gpu_list:
-            gpu_lower = gpu.lower()
-            is_virtual = any(keyword in gpu_lower for keyword in virtual_keywords)
-            if not is_virtual:
-                filtered.append(gpu)
-        
+        filtered = [gpu for gpu in gpu_list if not any(keyword in gpu.lower() for keyword in virtual_keywords)]
         log.debug(f"Filtered GPUs: {gpu_list} -> {filtered}")
         return filtered
 
@@ -467,49 +612,26 @@ class SystemInfoGatherer:
         if len(gpu_list) == 1:
             return gpu_list[0]
         
-        # Dedicated GPU keywords (higher priority)
-        dedicated_keywords = [
-            "geforce", "gtx", "rtx", "quadro", "tesla",  # NVIDIA
-            "radeon", "rx ", "vega", "fury", "firepro",  # AMD
-            "arc"  # Intel Arc (dedicated)
-        ]
+        dedicated_keywords = ["geforce", "gtx", "rtx", "quadro", "tesla", "radeon", "rx ", "vega", "fury", "firepro", "arc"]
+        integrated_keywords = ["intel hd", "intel uhd", "intel iris", "intel graphics", "amd radeon graphics", "radeon graphics", "vega graphics", "ryzen", "apu"]
         
-        # Integrated GPU keywords (lower priority)
-        integrated_keywords = [
-            "intel hd", "intel uhd", "intel iris", "intel graphics",
-            "amd radeon graphics", "radeon graphics",
-            "vega graphics", "ryzen", "apu"
-        ]
+        dedicated_gpus = [gpu for gpu in gpu_list if any(keyword in gpu.lower() for keyword in dedicated_keywords)]
+        integrated_gpus = [gpu for gpu in gpu_list if any(keyword in gpu.lower() for keyword in integrated_keywords)]
         
-        dedicated_gpus = []
-        integrated_gpus = []
-        other_gpus = []
-        
-        for gpu in gpu_list:
-            gpu_lower = gpu.lower()
-            
-            # Check if it's a dedicated GPU
-            if any(keyword in gpu_lower for keyword in dedicated_keywords):
-                dedicated_gpus.append(gpu)
-            # Check if it's an integrated GPU
-            elif any(keyword in gpu_lower for keyword in integrated_keywords):
-                integrated_gpus.append(gpu)
-            else:
-                other_gpus.append(gpu)
-        
-        # Priority: Dedicated > Other > Integrated
         if dedicated_gpus:
             selected = dedicated_gpus[0]
             log.debug(f"Selected dedicated GPU: {selected} from {gpu_list}")
             return selected
-        elif other_gpus:
+        
+        other_gpus = [gpu for gpu in gpu_list if gpu not in integrated_gpus]
+        if other_gpus:
             selected = other_gpus[0]
             log.debug(f"Selected other GPU: {selected} from {gpu_list}")
             return selected
-        else:
-            selected = integrated_gpus[0] if integrated_gpus else gpu_list[0]
-            log.debug(f"Selected integrated GPU: {selected} from {gpu_list}")
-            return selected
+        
+        selected = integrated_gpus[0] if integrated_gpus else gpu_list[0]
+        log.debug(f"Selected integrated GPU: {selected} from {gpu_list}")
+        return selected
 
     def get_ram_info(self):
         total_gb = 0
@@ -524,8 +646,7 @@ class SystemInfoGatherer:
                 wmi_mem_type = c.Win32_PhysicalMemory()[0].MemoryType
                 ram_type = mem_types.get(wmi_mem_type, "")
             except Exception as e:
-                log.warning(f"WMI failed to get detailed RAM info: {e}")
-                self._update_status("WMI memory query failed")
+                log.warning(f"WMI memory query failed: {e}")
         elif self.system == "Linux":
             self._update_status("Running dmidecode for memory information...")
             output = _run_command(['sudo', 'dmidecode', '--type', 'memory'])
@@ -561,6 +682,102 @@ class SystemInfoGatherer:
                 log.warning(f"psutil failed to get disk info: {e}")
                 self._update_status("Storage analysis failed")
         return "Unknown"
+
+    def get_battery_health(self):
+        """Get battery health, trying WMI first, then falling back to powercfg."""
+        if self.system == "Windows":
+            # --- METHOD 1: Fast WMI check ---
+            if WMI_AVAILABLE:
+                try:
+                    self._update_status("Querying WMI for battery health...")
+                    batteries = wmi.WMI().Win32_Battery()
+                    if batteries:
+                        battery = batteries[0]
+                        if battery.DesignCapacity is not None and battery.FullChargeCapacity is not None:
+                            design_capacity = int(battery.DesignCapacity)
+                            full_charge_capacity = int(battery.FullChargeCapacity)
+                            if design_capacity > 0:
+                                health = (full_charge_capacity / design_capacity) * 100
+                                self._update_status("Successfully retrieved battery health via WMI.")
+                                return f"{int(health)}"
+                except Exception as e:
+                    log.warning(f"WMI battery query failed: {e}")
+            
+            # --- METHOD 2: Robust powercfg fallback ---
+            self._update_status("WMI method failed or unavailable, trying powercfg fallback...")
+            temp_report_path = ""
+            try:
+                # Create a temporary file path
+                temp_dir = tempfile.gettempdir()
+                temp_report_path = os.path.join(temp_dir, "battery-report.html")
+                
+                command = ['powercfg', '/batteryreport', '/output', temp_report_path, '/duration', '1']
+                _run_command(command)
+                
+                if not os.path.exists(temp_report_path):
+                    log.error("powercfg did not generate a report.")
+                    return None
+
+                with open(temp_report_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # --- FIX: More robust regex to find the values ---
+                design_cap_match = re.search(r'DESIGN CAPACITY.*?<td.*?>\s*([\d.,]+)\s*mWh', content, re.IGNORECASE | re.DOTALL)
+                full_cap_match = re.search(r'FULL CHARGE CAPACITY.*?<td.*?>\s*([\d.,]+)\s*mWh', content, re.IGNORECASE | re.DOTALL)
+
+                if design_cap_match and full_cap_match:
+                    design_val_str = design_cap_match.group(1).replace(',', '').replace('.', '')
+                    full_val_str = full_cap_match.group(1).replace(',', '').replace('.', '')
+                    
+                    design_val = int(design_val_str)
+                    full_val = int(full_val_str)
+
+                    if design_val > 0:
+                        health = (full_val / design_val) * 100
+                        self._update_status("Successfully parsed battery health from powercfg report.")
+                        return f"{int(health)}"
+                else:
+                    self._update_status("Could not parse battery report.")
+                    log.warning("Failed to find capacity values in powercfg report.")
+
+            except Exception as e:
+                self._update_status("powercfg command failed.")
+                log.error(f"Failed to get battery health via powercfg: {e}")
+            finally:
+                if temp_report_path and os.path.exists(temp_report_path):
+                    try:
+                        os.remove(temp_report_path)
+                    except OSError as e:
+                        log.error(f"Could not remove temporary battery report: {e}")
+
+        elif self.system == "Linux":
+            # (Linux implementation remains the same)
+            try:
+                self._update_status("Checking /sys/class/power_supply for battery...")
+                base_path = "/sys/class/power_supply"
+                batteries = [b for b in os.listdir(base_path) if b.startswith("BAT")]
+                if not batteries:
+                    self._update_status("No battery found.")
+                    return None
+                
+                battery_path = os.path.join(base_path, batteries[0])
+                
+                if os.path.exists(os.path.join(battery_path, "energy_full_design")):
+                    with open(os.path.join(battery_path, "energy_full_design")) as f: design = int(f.read())
+                    with open(os.path.join(battery_path, "energy_full")) as f: full = int(f.read())
+                else:
+                    with open(os.path.join(battery_path, "charge_full_design")) as f: design = int(f.read())
+                    with open(os.path.join(battery_path, "charge_full")) as f: full = int(f.read())
+                
+                if design > 0:
+                    health = (full / design) * 100
+                    return f"{int(health)}"
+            except Exception as e:
+                log.warning(f"Failed to get battery health on Linux: {e}")
+                self._update_status("Failed to read battery health files.")
+        
+        self._update_status("Battery health could not be determined.")
+        return None
 
 def main():
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

@@ -74,7 +74,7 @@ class ConfigManager:
 
     def _get_default_config(self):
         return {
-            "application": {"name": "GLPI GUI Client", "version": "6.3.0"},
+            "application": {"name": "GLPI GUI Client", "version": "1.0.0"},
             "logging": {"level": "WARNING", "file": "glpi_gui.log"},
             "authentication": {
                 "remember_session": True,
@@ -750,12 +750,22 @@ class AddComputerFrame(ttk.Frame):
         content_frame.grid_columnconfigure(1, weight=1)
 
         basic_fields = {
-            "Name": "name", "Serial Number": "serial", "Location": "location",
-            "Model": "model", "Manufacturer": "manufacturer"
+            "Name": "name", 
+            "Serial Number": "serial", 
+            "Computer Type": "computer_type",
+            "Location": "location",
+            "Model": "model", 
+            "Manufacturer": "manufacturer"
         }
         hardware_fields = {
-            "Operating System": "os", "OS Version": "os_version", "Processor": "processor",
-            "GPU": "gpu", "RAM": "ram", "Hard Drive": "hdd"
+            "Operating System": "os", 
+            "OS Version": "os_version", 
+            "OS Edition": "os_edition",
+            "Processor": "processor",
+            "GPU": "gpu", 
+            "RAM": "ram", 
+            "Hard Drive": "hdd", 
+            "Battery Health (%)": "battery_health"
         }
         
         basic_lf = ttk.LabelFrame(content_frame, text="Basic Information")
@@ -852,7 +862,7 @@ class AddComputerFrame(ttk.Frame):
         """Populates the form fields from a dictionary."""
         all_vars = {**self.basic_vars, **self.hardware_vars}
         for key, var in all_vars.items():
-            if key in data:
+            if key in data and data[key] is not None:
                 var.set(data[key])
 
     def export_to_file(self):
@@ -940,6 +950,7 @@ class AddComputerFrame(ttk.Frame):
             "Festplatte": ("DeviceHardDrive", data.get("hdd")),
             "Modell": ("ComputerModel", data.get("model")),
             "Hersteller": ("Manufacturer", data.get("manufacturer")),
+            "Computertyp": ("ComputerType", data.get("computer_type")),
         }
         
         threading.Thread(target=self._validate_components_thread, args=(component_checks, data), daemon=True).start()
@@ -1230,6 +1241,7 @@ class GLPIGUIApp(tk.Tk):
         self.username = None
         self.current_frame = None
 
+        # CRITICAL: Setup logging FIRST before anything else
         self.setup_logging()
         
         try:
@@ -1265,14 +1277,32 @@ class GLPIGUIApp(tk.Tk):
         
         log_file_path = os.path.join(log_dir, cfg["file"])
         
-        logging.basicConfig(
-            level=level, 
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-            handlers=[
-                logging.FileHandler(log_file_path), 
-                logging.StreamHandler()
-            ]
-        )
+        # Clear any existing handlers to avoid duplicates
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        # Create formatters
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        
+        # File handler
+        try:
+            file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"Warning: Could not create log file {log_file_path}: {e}")
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+        
+        # Set the root logger level
+        root_logger.setLevel(level)
+        
         logging.info("Application starting up...")
         logging.info(f"Config file location: {self.config_manager.config_path}")
         logging.info(f"Log file location: {log_file_path}")
@@ -1296,7 +1326,7 @@ class GLPIGUIApp(tk.Tk):
 
     def show_login_frame(self):
         self.title("GLPI Login")
-        self.geometry("450x350")
+        self.geometry("450x400")
         self.config(menu=tk.Menu(self))
         self.switch_frame(LoginFrame)
 
@@ -1335,7 +1365,7 @@ class GLPIGUIApp(tk.Tk):
             self.config_manager.update_session(token, username)
         
         self.title(self.config_manager.config["application"]["name"])
-        self.geometry("900x500")
+        self.geometry("900x650")
         self.switch_frame(MainFrame)
 
     def logout(self):

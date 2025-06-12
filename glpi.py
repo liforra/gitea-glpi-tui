@@ -146,12 +146,18 @@ def add(itemtype, data):
                 "computermodels_id": getId("ComputerModel", data.get("model")),
                 "comment": f"\r\nThis Computer was automagically added using The GLPIClient. {username} is responsible for any wrongdoings. Added from {(os.popen('hostname').read().strip() or 'Unknown Device')}",
                 "manufacturers_id": getId("Manufacturer", data.get("manufacturer")),
-                # --- MODIFIED: OS info is now handled as a linked item in addToItemtype ---
+                "computertypes_id": getId("ComputerType", data.get("computer_type")),  # Added this line
+                "_plugin_fields_funktionsfhigkeitfielddropdowns_id_defined": [7],
             }
 
-            if data.get("battery_health"):
-                payload_input["plugin_fields_akkugesundheitin"] = data.get("battery_health")
-                log.debug(f"Adding custom field for battery health: {data.get('battery_health')}")
+            battery_health_str = data.get("battery_health")
+            if battery_health_str:
+                try:
+                    health_value = int(battery_health_str)
+                    payload_input["akkugesundheitinfield"] = health_value
+                    log.debug(f"Adding custom field for battery health: {health_value} (as integer)")
+                except (ValueError, TypeError):
+                    log.warning(f"Could not convert battery health '{battery_health_str}' to an integer. Skipping field.")
 
             payload = {"input": payload_input}
             
@@ -169,7 +175,6 @@ def add(itemtype, data):
                 log.error(f"Failed to create computer. Response: {response}")
                 raise Exception(f"Computer creation failed: {response_data.get('message', 'Unknown error')}")
 
-            # --- MODIFIED: Added "os" to the list to trigger the call to addToItemtype ---
             items_to_add = ["cpu", "processor", "gpu", "ram", "hdd", "os"]
             if any(item in data for item in items_to_add):
                 addToItemtype(computer_id, data)
@@ -177,8 +182,6 @@ def add(itemtype, data):
             return computer_id
 
 def addToItemtype(device_id, data):
-    # --- MODIFIED: Restructured to handle hardware and OS separately ---
-    
     # 1. Handle Hardware Components
     hardware_components = ["cpu", "processor", "gpu", "ram", "hdd"]
     for component in hardware_components:
@@ -200,7 +203,7 @@ def addToItemtype(device_id, data):
                     item_payload['deviceharddrives_id'] = getId("DeviceHardDrive", data.get(component))
                     endpoint = "/Item_DeviceHardDrive"
                 case _:
-                    continue # Should not happen
+                    continue
             
             payload = json.dumps({'input': item_payload})
             sendglpi(endpoint, None, method="POST", payload=payload)
@@ -210,6 +213,7 @@ def addToItemtype(device_id, data):
         log.debug(f"Linking Operating System to device ID {device_id}")
         os_id = getId("OperatingSystem", data.get("os"))
         os_version_id = getId("OperatingSystemVersion", data.get("os_version"))
+        os_edition_id = getId("OperatingSystemEdition", data.get("os_edition"))  # Added this line
 
         if os_id and os_id not in [1403, 1404]:
             os_payload_input = {
@@ -219,6 +223,8 @@ def addToItemtype(device_id, data):
             }
             if os_version_id and os_version_id not in [1403, 1404]:
                 os_payload_input['operatingsystemversions_id'] = os_version_id
+            if os_edition_id and os_edition_id not in [1403, 1404]:  # Added this block
+                os_payload_input['operatingsystemeditions_id'] = os_edition_id
             
             payload = json.dumps({'input': os_payload_input})
             sendglpi("/Item_OperatingSystem", None, method="POST", payload=payload)
