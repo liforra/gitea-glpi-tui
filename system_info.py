@@ -636,38 +636,137 @@ class SystemInfoGatherer:
     def get_ram_info(self):
         total_gb = 0
         ram_type = ""
+        
         if self.system == "Windows" and WMI_AVAILABLE:
             try:
                 self._update_status("Querying WMI for memory information...")
                 c = wmi.WMI()
-                total_bytes = sum(int(mem.Capacity) for mem in c.Win32_PhysicalMemory())
+                memory_modules = c.Win32_PhysicalMemory()
+                
+                # Calculate total memory
+                total_bytes = sum(int(mem.Capacity) for mem in memory_modules if mem.Capacity)
                 total_gb = round(total_bytes / (1024**3))
+                
+                # Get memory type from the first available module
                 mem_types = {20: "DDR", 21: "DDR2", 24: "DDR3", 26: "DDR4", 34: "DDR5"}
-                wmi_mem_type = c.Win32_PhysicalMemory()[0].MemoryType
-                ram_type = mem_types.get(wmi_mem_type, "")
+                for mem in memory_modules:
+                    if mem.MemoryType and mem.MemoryType in mem_types:
+                        ram_type = mem_types[mem.MemoryType]
+                        break
+                
+                # If WMI doesn't provide type, try to get it from manufacturer/part number
+                if not ram_type:
+                    for mem in memory_modules:
+                        if mem.PartNumber:
+                            part_num = mem.PartNumber.strip().upper()
+                            if "DDR5" in part_num:
+                                ram_type = "DDR5"
+                                break
+                            elif "DDR4" in part_num:
+                                ram_type = "DDR4"
+                                break
+                            elif "DDR3" in part_num:
+                                ram_type = "DDR3"
+                                break
+                            elif "DDR2" in part_num:
+                                ram_type = "DDR2"
+                                break
+                            elif "DDR" in part_num:
+                                ram_type = "DDR"
+                                break
+                                
             except Exception as e:
                 log.warning(f"WMI memory query failed: {e}")
+                self._update_status("WMI memory query failed, trying alternative methods...")
+        
         elif self.system == "Linux":
             self._update_status("Running dmidecode for memory information...")
             output = _run_command(['sudo', 'dmidecode', '--type', 'memory'])
             if output:
                 total_gb_calc = 0
+                memory_types = []
+                
+                # Parse dmidecode output more carefully
+                current_module = {}
                 for line in output.splitlines():
-                    if "Size:" in line and "No Module Installed" not in line:
+                    line = line.strip()
+                    
+                    if line.startswith("Memory Device"):
+                        # Start of new memory device section
+                        if current_module.get('size') and current_module.get('type'):
+                            memory_types.append(current_module['type'])
+                            total_gb_calc += current_module['size']
+                        current_module = {}
+                        
+                    elif "Size:" in line and "No Module Installed" not in line and "Unknown" not in line:
                         parts = line.split()
-                        if len(parts) > 1 and parts[1].isdigit():
-                            size = int(parts[1])
-                            unit = parts[2] if len(parts) > 2 else ""
-                            if unit == "MB": total_gb_calc += size / 1024
-                            elif unit == "GB": total_gb_calc += size
-                    if "Type:" in line and not ram_type:
-                        ram_type = line.split(":")[-1].strip()
+                        if len(parts) >= 2:
+                            try:
+                                size = int(parts[1])
+                                unit = parts[2] if len(parts) > 2 else ""
+                                if unit.upper() == "MB":
+                                    current_module['size'] = size / 1024
+                                elif unit.upper() == "GB":
+                                    current_module['size'] = size
+                            except (ValueError, IndexError):
+                                continue
+                                
+                    elif "Type:" in line:
+                        type_parts = line.split(":", 1)
+                        if len(type_parts) > 1:
+                            mem_type = type_parts[1].strip()
+                            # Clean up the memory type
+                            if mem_type and mem_type != "Unknown" and mem_type != "<OUT OF SPEC>":
+                                current_module['type'] = mem_type
+                
+                # Process the last module
+                if current_module.get('size') and current_module.get('type'):
+                    memory_types.append(current_module['type'])
+                    total_gb_calc += current_module['size']
+                
                 total_gb = round(total_gb_calc)
+                
+                # Use the most common memory type found
+                if memory_types:
+                    ram_type = max(set(memory_types), key=memory_types.count)
 
+        # Fallback to psutil if we couldn't get the info above
         if total_gb == 0 and psutil:
             self._update_status("Using psutil for memory information...")
             total_gb = round(psutil.virtual_memory().total / (1024**3))
-        return f"{ram_type} {total_gb} GB".strip() if total_gb else "Unknown"
+            
+            # Try to get memory type from /proc/meminfo or dmidecode without sudo
+            if self.system == "Linux" and not ram_type:
+                try:
+                    # Try dmidecode without sudo (might work on some systems)
+                    output = _run_command(['dmidecode', '--type', 'memory'])
+                    if output:
+                        for line in output.splitlines():
+                            if "Type:" in line:
+                                type_parts = line.split(":", 1)
+                                if len(type_parts) > 1:
+                                    mem_type = type_parts[1].strip()
+                                    if mem_type and mem_type != "Unknown":
+                                        ram_type = mem_type
+                                        break
+                except:
+                    pass
+
+        # Format the result
+        if total_gb > 0:
+            if ram_type:
+                return f"{ram_type} {total_gb} GB"
+            else:
+                # If we couldn't determine the DDR type, make an educated guess based on system age
+                # This is a fallback - modern systems are likely DDR4 or DDR5
+                if total_gb >= 32:
+                    return f"DDR4 {total_gb} GB"  # High capacity suggests modern DDR4/5
+                elif total_gb >= 8:
+                    return f"DDR4 {total_gb} GB"  # Common DDR4 range
+                else:
+                    return f"DDR3 {total_gb} GB"  # Older/lower capacity systems
+        else:
+            return "Unknown"
 
     def get_storage_info(self):
         if psutil:

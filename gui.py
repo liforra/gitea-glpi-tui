@@ -12,6 +12,9 @@ import sys
 import webbrowser
 import csv
 
+# Version Management
+APP_VERSION = "0.9.0"
+
 # Add PIL import for image handling
 try:
     from PIL import Image, ImageTk
@@ -74,7 +77,7 @@ class ConfigManager:
 
     def _get_default_config(self):
         return {
-            "application": {"name": "GLPI GUI Client", "version": "1.0.0"},
+            "application": {"name": "GLPI GUI Client", "version": APP_VERSION},
             "logging": {"level": "WARNING", "file": "glpi_gui.log"},
             "authentication": {
                 "remember_session": True,
@@ -138,6 +141,120 @@ class ConfigManager:
             return datetime.now() < datetime.fromisoformat(self.config["session"]["expires"])
         except: 
             return False
+
+class AboutDialog(tk.Toplevel):
+    def __init__(self, parent, config_manager, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.title("About GLPI GUI Client")
+        self.resizable(False, False)
+        self.grab_set()
+        self.config_manager = config_manager
+
+        # Theme colors (match your purple theme)
+        BG = "#201a2b"
+        FG = "#dcd4e8"
+        ACCENT = "#9966cc"
+        BTN_BG = "#302a40"
+
+        self.configure(bg=BG)
+
+        # Main content frame
+        content_frame = tk.Frame(self, bg=BG)
+        content_frame.pack(padx=30, pady=20, fill="both", expand=True)
+
+        # Application title
+        title_label = tk.Label(
+            content_frame, 
+            text="GLPI GUI Client", 
+            font=("Segoe UI", 16, "bold"),
+            bg=BG, fg=ACCENT
+        )
+        title_label.pack(pady=(0, 10))
+
+        # Version information
+        app_version = APP_VERSION
+        config_version = self.config_manager.config.get("application", {}).get("version", "Unknown")
+        
+        version_frame = tk.Frame(content_frame, bg=BG)
+        version_frame.pack(pady=(0, 15))
+        
+        version_label = tk.Label(
+            version_frame,
+            text=f"Version: {app_version}\nConfig Version: {config_version}",
+            font=("Segoe UI", 10),
+            bg=BG, fg=FG,
+            justify="center"
+        )
+        version_label.pack()
+
+        # Developer information
+        dev_label = tk.Label(
+            content_frame,
+            text="Developed by Liforra",
+            font=("Segoe UI", 11, "bold"),
+            bg=BG, fg=FG
+        )
+        dev_label.pack(pady=(0, 5))
+
+        # Links frame
+        links_frame = tk.Frame(content_frame, bg=BG)
+        links_frame.pack(pady=(0, 20))
+
+        # Create clickable links
+        self._create_link(links_frame, "Developer Profile", "https://pronouns.page/@Liforra")
+        self._create_link(links_frame, "Source Code", "https://gitea.liforra.de/liforra/glpi-tui")
+        self._create_link(links_frame, "Report Issues", "https://gitea.liforra.de/liforra/glpi-tui/issues")
+
+        # Description
+        desc_label = tk.Label(
+            content_frame,
+            text="A modern desktop application for managing GLPI assets\nwith intuitive interface and automated system detection.",
+            font=("Segoe UI", 9),
+            bg=BG, fg=FG,
+            justify="center"
+        )
+        desc_label.pack(pady=(0, 20))
+
+        # Close button
+        close_btn = ttk.Button(content_frame, text="Close", command=self.destroy)
+        close_btn.pack()
+
+        # Center the dialog
+        self.geometry("400x350")
+        self.transient(parent)
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (self.winfo_width() // 2)
+        y = (self.winfo_screenheight() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _create_link(self, parent, text, url):
+        """Create a clickable link label."""
+        link_label = tk.Label(
+            parent,
+            text=text,
+            font=("Segoe UI", 9, "underline"),
+            bg="#201a2b", fg="#9966cc",
+            cursor="hand2"
+        )
+        link_label.pack(pady=2)
+        link_label.bind("<Button-1>", lambda e: self._open_url(url))
+        
+        # Hover effects
+        def on_enter(e):
+            link_label.config(fg="#b380d9")
+        def on_leave(e):
+            link_label.config(fg="#9966cc")
+        
+        link_label.bind("<Enter>", on_enter)
+        link_label.bind("<Leave>", on_leave)
+
+    def _open_url(self, url):
+        """Open URL in default browser."""
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            logging.error(f"Failed to open URL {url}: {e}")
+            messagebox.showerror("Error", f"Failed to open URL:\n{url}", parent=self)
 
 class ThemeManager:
     @staticmethod
@@ -1209,6 +1326,7 @@ class MainFrame(ttk.Frame):
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self._show_about)
         help_menu.add_command(label="Issues", command=self._open_issues_page)
 
         notebook = ttk.Notebook(self)
@@ -1219,6 +1337,10 @@ class MainFrame(ttk.Frame):
 
         notebook.add(add_computer_tab, text="Add Computer")
         notebook.add(search_tab, text="Search")
+
+    def _show_about(self):
+        """Show the about dialog."""
+        AboutDialog(self.controller, self.controller.config_manager)
 
     def _open_issues_page(self):
         """Open the issues page in the default browser"""
@@ -1348,12 +1470,12 @@ class GLPIGUIApp(tk.Tk):
         threading.Thread(target=_authenticate, daemon=True).start()
 
     def _handle_auth_result(self, result, username, remember, status_label):
-        self.config(cursor="")
-        if isinstance(result, list) and len(result) >= 1:
-            self.on_login_success(result[0], username, remember)
-        else:
-            messages = {1401: "Invalid username or password", 1400: "Authentication failed"}
-            status_label.config(text=messages.get(result, f"Failed (Code: {result})"))
+            self.config(cursor="")
+            if isinstance(result, list) and len(result) >= 1:
+                self.on_login_success(result[0], username, remember)
+            else:
+                messages = {1401: "Invalid username or password", 1400: "Authentication failed"}
+                status_label.config(text=messages.get(result, f"Failed (Code: {result})"))
 
     def _handle_auth_error(self, error, status_label):
         self.config(cursor="")
