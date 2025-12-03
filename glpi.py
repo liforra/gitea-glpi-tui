@@ -644,32 +644,18 @@ class GLPIClient:
                         component_id = self.getId("DeviceHardDrive", component_value)
                     
                     if component_id and component_id not in [1403, 1404]:
-                        payload = {}
+                        component_itemtype = None
                         if component in ("processor", "cpu"):
-                            payload["processors"] = [{"id": component_id}]
+                            component_itemtype = "DeviceProcessor"
                         elif component == "gpu":
-                            payload["graphicCards"] = [{"id": component_id}]
+                            component_itemtype = "DeviceGraphicCard"
                         elif component == "ram":
-                            payload["memories"] = [{"id": component_id}]
+                            component_itemtype = "DeviceMemory"
                         elif component == "hdd":
-                            payload["hardDrives"] = [{"id": component_id}]
-                        if payload:
-                            try:
-                                self._send_request(f"/Assets/Computer/{device_id}", method="PATCH", payload=payload)
-                            except Exception as e:
-                                log.warning(f"v2 component linking failed for {component}: {e}, falling back to v1")
-                                component_itemtype = None
-                                if component in ("processor", "cpu"):
-                                    component_itemtype = "DeviceProcessor"
-                                elif component == "gpu":
-                                    component_itemtype = "DeviceGraphicCard"
-                                elif component == "ram":
-                                    component_itemtype = "DeviceMemory"
-                                elif component == "hdd":
-                                    component_itemtype = "DeviceHardDrive"
-                                
-                                if component_itemtype:
-                                    self._link_component_v1(device_id, component_itemtype, component_id)
+                            component_itemtype = "DeviceHardDrive"
+                        
+                        if component_itemtype:
+                            self._link_component_v1(device_id, component_itemtype, component_id)
                 else:
                     # v1 API component linking
                     item_payload = {'items_id': device_id, 'itemtype': 'Computer'}
