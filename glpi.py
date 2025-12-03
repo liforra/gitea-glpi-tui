@@ -68,14 +68,16 @@ class GLPIClient:
             success, token_or_message = self._init_session_v2(username, password)
         else:
             success, token_or_message = self._init_session_v1(username, password)
+            if success:
+                self.session_token = token_or_message
 
-        if success:
+        if success and self.api_version != 'v1':
             self.session_token = token_or_message
         return success, token_or_message
 
     def _init_session_v1(self, username, password):
         """
-        Initialize a v1 session.
+        Initialize a v1 session and return the token.
         """
         url = f"{self.glpi_url}/apirest.php/initSession"
         log.debug(f"v1 init session URL: {url}")
@@ -94,8 +96,7 @@ class GLPIClient:
             )
             log.debug(f"v1 init session response text: {response.text}")
             if response.status_code == 200:
-                self.session_token = response.json().get('session_token')
-                return True, self.session_token
+                return True, response.json().get('session_token')
             else:
                 return False, response.json().get('message', 'Login failed')
         except Exception as e:
@@ -274,14 +275,16 @@ class GLPIClient:
         self.password = None
         return True
 
-    def _send_request(self, endpoint, method="GET", payload=None, params=None):
-        if not self.session_token:
+    def _send_request(self, endpoint, method="GET", payload=None, params=None, temp_token=None):
+        if not (self.session_token or temp_token):
             raise RuntimeError("GLPI Client Error: No session token available. Please authenticate first.")
 
-        if self.api_version == "v2":
+        token_to_use = temp_token or self.session_token
+        
+        if self.api_version == "v2" and not temp_token:
             base_url = f"{self.glpi_url}/api.php/v2"
             headers = {
-                "Authorization": f"Bearer {self.session_token}",
+                "Authorization": f"Bearer {token_to_use}",
                 "User-Agent": self.user_agent,
                 "Accept": "application/json"
             }
@@ -289,17 +292,18 @@ class GLPIClient:
                 headers["GLPI-App-Token"] = self.app_token
             if method.upper() != "GET":
                 headers["Content-Type"] = "application/json"
-        else:
+        else: # v1 or temporary v1 session
             base_url = f"{self.glpi_url}/apirest.php"
             headers = {
-                "Session-Token": self.session_token,
+                "Session-Token": token_to_use,
                 "App-Token": self.app_token,
                 "User-Agent": self.user_agent,
                 "Accept": "application/json"
             }
             if method.upper() != "GET":
                 headers["Content-Type"] = "application/json"
-        def do_request(base: str):
+                
+def do_request(base: str):
             url = f"{base}{endpoint}"
             log.debug(f"{method} request to {url} params={params} payload={payload}")
             if method.upper() == "GET":
@@ -308,15 +312,12 @@ class GLPIClient:
 
         try:
             self.metrics["requests"] += 1
-            if self.api_version == "v2":
-                response = do_request(base_url)
-            else:
-                base = f"{self.glpi_url}/apirest.php"
-                response = do_request(base)
+            response = do_request(base_url)
 
             if response.status_code == 401:
-                self.session_token = None
-                self.username = None
+                if not temp_token:
+                    self.session_token = None
+                    self.username = None
                 log.warning("Session token expired or invalid - cleared session")
                 self.metrics["unauthorized"] += 1
                 raise Exception("401 Unauthorized: Session expired or invalid.")
@@ -497,7 +498,7 @@ class GLPIClient:
         if not computer_id:
             log.error(f"Failed to create computer. Response: {response_data}")
             raise Exception(f"Computer creation failed: {response_data.get('message', 'Unknown error')}")
-        items_to_add = ["cpu", "processor", "gpu", "ram", "hdd", "os"]
+        items_to_add = ["cpu", "processor", "gpu", "ram", "hdd", "os", "os_version", "os_edition"]
         if any(item in data for item in items_to_add):
             self.addToItemtype(computer_id, data)
         return computer_id
@@ -605,89 +606,71 @@ class GLPIClient:
             log.error(f'v1 fallback setup failed for {itemtype} "{query}": {e}')
             return 1404
 
-    def _link_component_v1(self, device_id, component_itemtype, component_id):
+    def _link_component_v1(self, device_id, item_type, payload_key, item_id):
         """Creates a temporary v1 session to link components, as required by the hybrid API approach."""
-        log.warning(f"Using temporary v1 session to link {component_itemtype} to device {device_id}")
+        log.warning(f"Using temporary v1 session to link {item_type} ({item_id}) to device {device_id}")
 
         if not self.password:
             log.error("Cannot create temporary v1 session: password is not available.")
             return
 
-        original_api_version = self.api_version
-        original_session_token = self.session_token
-        temp_v1_token = None
+        success, temp_v1_token = self._init_session_v1(self.username, self.password)
+        if not success:
+            log.error(f"Failed to create temporary v1 session: {temp_v1_token}")
+            return
 
         try:
-            # 1. Initiate a temporary v1 session
-            self.api_version = "v1"
-            success, temp_v1_token = self._init_session_v1(self.username, self.password)
-            if not success:
-                log.error(f"Failed to create temporary v1 session: {temp_v1_token}")
-                return
-
-            self.session_token = temp_v1_token
-
-            # 2. Perform the linking using the temporary v1 token
-            endpoint = f"/Item_{component_itemtype}"
+            endpoint = f"/{item_type}/"
             item_payload = {
                 'items_id': device_id,
                 'itemtype': 'Computer',
-                f'{component_itemtype.lower()}s_id': component_id
+                payload_key: item_id
             }
             payload = {'input': item_payload}
-            self._send_request(endpoint, method="POST", payload=payload)
-            log.info(f"Successfully linked {component_itemtype} (ID: {component_id}) to device {device_id} using temporary v1 session.")
+            self._send_request(endpoint, method="POST", payload=payload, temp_token=temp_v1_token)
+            log.info(f"Successfully linked {item_type} (ID: {item_id}) to device {device_id} using temporary v1 session.")
 
         except Exception as e:
             log.error(f"v1 component linking failed: {e}")
         finally:
-            # 3. Kill the temporary v1 session
+            # Kill the temporary v1 session
             if temp_v1_token:
-                # Use a separate kill request that doesn't rely on the main object state
                 try:
                     kill_url = f"{self.glpi_url}/apirest.php/killSession"
                     kill_headers = {
-                        "Content-Type": "application/json",
-                        "Session-Token": temp_v1_token,
-                        "App-Token": self.app_token,
-                        "User-Agent": self.user_agent
+                        "Content-Type": "application/json", "Session-Token": temp_v1_token,
+                        "App-Token": self.app_token, "User-Agent": self.user_agent
                     }
                     requests.get(kill_url, headers=kill_headers, verify=self.verify_ssl)
                     log.debug("Temporary v1 session killed successfully.")
                 except Exception as kill_e:
                     log.error(f"Failed to kill temporary v1 session: {kill_e}")
-            
-            # 4. Restore original session state
-            self.api_version = original_api_version
-            self.session_token = original_session_token
 
     def addToItemtype(self, device_id, data):
         # 1. Handle Hardware Components
         hardware_components = ["cpu", "processor", "gpu", "ram", "hdd"]
         for component in hardware_components:
             if component in data and data.get(component):
-                log.debug(f"Adding hardware component '{component}' to device ID {device_id}")
-                
                 component_value = data.get(component)
                 
                 if self.api_version == "v2":
                     component_id = None
                     component_itemtype = None
-                    if component in ("processor", "cpu"):
-                        component_id = self.getId("DeviceProcessor", component_value)
-                        component_itemtype = "DeviceProcessor"
-                    elif component == "gpu":
-                        component_id = self.getId("DeviceGraphicCard", component_value)
-                        component_itemtype = "DeviceGraphicCard"
-                    elif component == "ram":
-                        component_id = self.getId("DeviceMemory", component_value)
-                        component_itemtype = "DeviceMemory"
-                    elif component == "hdd":
-                        component_id = self.getId("DeviceHardDrive", component_value)
-                        component_itemtype = "DeviceHardDrive"
+                    payload_key = None
                     
-                    if component_id and component_id not in [1403, 1404] and component_itemtype:
-                        self._link_component_v1(device_id, component_itemtype, component_id)
+                    if component in ("processor", "cpu"):
+                        component_itemtype, payload_key = "DeviceProcessor", "deviceprocessors_id"
+                    elif component == "gpu":
+                        component_itemtype, payload_key = "DeviceGraphicCard", "devicegraphiccards_id"
+                    elif component == "ram":
+                        component_itemtype, payload_key = "DeviceMemory", "devicememories_id"
+                    elif component == "hdd":
+                        component_itemtype, payload_key = "DeviceHardDrive", "deviceharddrives_id"
+
+                    if component_itemtype:
+                        component_id = self.getId(component_itemtype, component_value)
+                        if component_id and component_id not in [1403, 1404]:
+                            self._link_component_v1(device_id, f"Item_{component_itemtype}", payload_key, component_id)
                 else:
                     # v1 API component linking
                     item_payload = {'items_id': device_id, 'itemtype': 'Computer'}
@@ -705,7 +688,7 @@ class GLPIClient:
                         item_payload['deviceharddrives_id'] = self.getId("DeviceHardDrive", component_value)
                         endpoint = "/Item_DeviceHardDrive"
                     
-                    if endpoint:
+                    if endpoint and item_payload.get(list(item_payload.keys())[-1]) not in [1403, 1404]:
                         payload = {'input': item_payload}
                         self._send_request(endpoint, method="POST", payload=payload)
 
@@ -716,30 +699,21 @@ class GLPIClient:
             os_version_id = self.getId("OperatingSystemVersion", data.get("os_version"))
             os_edition_id = self.getId("OperatingSystemEdition", data.get("os_edition"))
 
-            if os_id and os_id not in [1403, 1404]:
-                if self.api_version == "v2":
-                    payload = {"operatingSystem": {"id": os_id}}
-                    if os_version_id and os_version_id not in [1403, 1404]:
-                        payload["operatingSystemVersion"] = {"id": os_version_id}
-                    if os_edition_id and os_edition_id not in [1403, 1404]:
-                        payload["operatingSystemEdition"] = {"id": os_edition_id}
-                    try:
-                        self._send_request(f"/Assets/Computer/{device_id}", method="PATCH", payload=payload)
-                    except Exception as e:
-                        log.warning(f"v2 OS linking failed: {e}")
-                else:
-                    # v1 API OS linking
-                    os_payload_input = {
-                        'items_id': device_id,
-                        'itemtype': 'Computer',
-                        'operatingsystems_id': os_id,
-                    }
-                    if os_version_id and os_version_id not in [1403, 1404]:
-                        os_payload_input['operatingsystemversions_id'] = os_version_id
-                    if os_edition_id and os_edition_id not in [1403, 1404]:
-                        os_payload_input['operatingsystemeditions_id'] = os_edition_id
-                    
-                    payload = {'input': os_payload_input}
-                    self._send_request("/Item_OperatingSystem", method="POST", payload=payload)
+            if self.api_version == "v2":
+                if os_id and os_id not in [1403, 1404]:
+                    self._link_component_v1(device_id, "Item_OperatingSystem", "operatingsystems_id", os_id)
+                if os_version_id and os_version_id not in [1403, 1404]:
+                    self._link_component_v1(device_id, "Item_OperatingSystemVersion", "operatingsystemversions_id", os_version_id)
+                if os_edition_id and os_edition_id not in [1403, 1404]:
+                    self._link_component_v1(device_id, "Item_OperatingSystemEdition", "operatingsystemeditions_id", os_edition_id)
             else:
-                log.warning(f"Could not link Operating System because its ID could not be found for: {data.get('os')}")
+                # v1 API OS linking
+                if os_id and os_id not in [1403, 1404]:
+                    payload = {'input': {'items_id': device_id, 'itemtype': 'Computer', 'operatingsystems_id': os_id}}
+                    self._send_request("/Item_OperatingSystem", method="POST", payload=payload)
+                if os_version_id and os_version_id not in [1403, 1404]:
+                    payload = {'input': {'items_id': device_id, 'itemtype': 'Computer', 'operatingsystemversions_id': os_version_id}}
+                    self._send_request("/Item_OperatingSystemVersion", method="POST", payload=payload)
+                if os_edition_id and os_edition_id not in [1403, 1404]:
+                    payload = {'input': {'items_id': device_id, 'itemtype': 'Computer', 'operatingsystemeditions_id': os_edition_id}}
+                    self._send_request("/Item_OperatingSystemEdition", method="POST", payload=payload)
