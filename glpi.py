@@ -27,6 +27,7 @@ class GLPIClient:
         self.user_agent = "GiteaGLPI-TUI/1.0"
         self.session_token = None
         self.username = None
+        self.password = None
         self.metrics = {"requests": 0, "errors": 0, "errors_4xx": 0, "errors_5xx": 0, "unauthorized": 0}
 
     def discover_api_versions(self):
@@ -61,6 +62,7 @@ class GLPIClient:
         Initialize a session with the GLPI API.
         """
         self.username = username
+        self.password = password
         log.info(f"Initializing session for user '{username}' using API {self.api_version}")
         if self.api_version == "v2":
             success, token_or_message = self._init_session_v2(username, password)
@@ -258,6 +260,8 @@ class GLPIClient:
                 response = requests.get(url, headers=headers, verify=self.verify_ssl)
                 if response.status_code == 200:
                     self.session_token = None
+                    self.username = None
+                    self.password = None
                     return True
                 return False
             except Exception as e:
@@ -266,6 +270,8 @@ class GLPIClient:
         
         # For v2, there is no explicit logout endpoint, so we just clear the token
         self.session_token = None
+        self.username = None
+        self.password = None
         return True
 
     def _send_request(self, endpoint, method="GET", payload=None, params=None):
@@ -600,13 +606,28 @@ class GLPIClient:
             return 1404
 
     def _link_component_v1(self, device_id, component_itemtype, component_id):
-        """Fallback to v1 API for linking components."""
-        log.warning(f"Using v1 API to link {component_itemtype} to device {device_id}")
-        try:
-            # Temporarily switch to v1 API for this call
-            original_api_version = self.api_version
-            self.api_version = "v1"
+        """Creates a temporary v1 session to link components, as required by the hybrid API approach."""
+        log.warning(f"Using temporary v1 session to link {component_itemtype} to device {device_id}")
 
+        if not self.password:
+            log.error("Cannot create temporary v1 session: password is not available.")
+            return
+
+        original_api_version = self.api_version
+        original_session_token = self.session_token
+        temp_v1_token = None
+
+        try:
+            # 1. Initiate a temporary v1 session
+            self.api_version = "v1"
+            success, temp_v1_token = self._init_session_v1(self.username, self.password)
+            if not success:
+                log.error(f"Failed to create temporary v1 session: {temp_v1_token}")
+                return
+
+            self.session_token = temp_v1_token
+
+            # 2. Perform the linking using the temporary v1 token
             endpoint = f"/Item_{component_itemtype}"
             item_payload = {
                 'items_id': device_id,
@@ -615,11 +636,30 @@ class GLPIClient:
             }
             payload = {'input': item_payload}
             self._send_request(endpoint, method="POST", payload=payload)
+            log.info(f"Successfully linked {component_itemtype} (ID: {component_id}) to device {device_id} using temporary v1 session.")
+
         except Exception as e:
             log.error(f"v1 component linking failed: {e}")
         finally:
-            # Always restore original API version
+            # 3. Kill the temporary v1 session
+            if temp_v1_token:
+                # Use a separate kill request that doesn't rely on the main object state
+                try:
+                    kill_url = f"{self.glpi_url}/apirest.php/killSession"
+                    kill_headers = {
+                        "Content-Type": "application/json",
+                        "Session-Token": temp_v1_token,
+                        "App-Token": self.app_token,
+                        "User-Agent": self.user_agent
+                    }
+                    requests.get(kill_url, headers=kill_headers, verify=self.verify_ssl)
+                    log.debug("Temporary v1 session killed successfully.")
+                except Exception as kill_e:
+                    log.error(f"Failed to kill temporary v1 session: {kill_e}")
+            
+            # 4. Restore original session state
             self.api_version = original_api_version
+            self.session_token = original_session_token
 
     def addToItemtype(self, device_id, data):
         # 1. Handle Hardware Components
@@ -629,37 +669,29 @@ class GLPIClient:
                 log.debug(f"Adding hardware component '{component}' to device ID {device_id}")
                 
                 component_value = data.get(component)
-                endpoint = None
-                payload = None
                 
                 if self.api_version == "v2":
                     component_id = None
+                    component_itemtype = None
                     if component in ("processor", "cpu"):
                         component_id = self.getId("DeviceProcessor", component_value)
+                        component_itemtype = "DeviceProcessor"
                     elif component == "gpu":
                         component_id = self.getId("DeviceGraphicCard", component_value)
+                        component_itemtype = "DeviceGraphicCard"
                     elif component == "ram":
                         component_id = self.getId("DeviceMemory", component_value)
+                        component_itemtype = "DeviceMemory"
                     elif component == "hdd":
                         component_id = self.getId("DeviceHardDrive", component_value)
+                        component_itemtype = "DeviceHardDrive"
                     
-                    if component_id and component_id not in [1403, 1404]:
-                        component_itemtype = None
-                        if component in ("processor", "cpu"):
-                            component_itemtype = "DeviceProcessor"
-                        elif component == "gpu":
-                            component_itemtype = "DeviceGraphicCard"
-                        elif component == "ram":
-                            component_itemtype = "DeviceMemory"
-                        elif component == "hdd":
-                            component_itemtype = "DeviceHardDrive"
-                        
-                        if component_itemtype:
-                            self._link_component_v1(device_id, component_itemtype, component_id)
+                    if component_id and component_id not in [1403, 1404] and component_itemtype:
+                        self._link_component_v1(device_id, component_itemtype, component_id)
                 else:
                     # v1 API component linking
                     item_payload = {'items_id': device_id, 'itemtype': 'Computer'}
-                    
+                    endpoint = None
                     if component in ("processor", "cpu"):
                         item_payload['deviceprocessors_id'] = self.getId("DeviceProcessor", component_value)
                         endpoint = "/Item_DeviceProcessor"
