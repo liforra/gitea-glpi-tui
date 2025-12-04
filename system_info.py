@@ -75,6 +75,15 @@ def _round_storage_gb(gib):
     else:
         return round(estimated_marketing_gb / 128) * 128  # Round to 128GB increments
 
+def _format_storage_size(size_gb):
+    if not size_gb:
+        return ""
+    if size_gb >= 950:
+        tb = round(size_gb / 1000)
+        return f"{tb}TB"
+    else:
+        return f"{int(size_gb)}GB"
+
 def _clean_processor_name(name):
     """Extracts the core model number from a full CPU brand string."""
     if not name: return "Unknown"
@@ -989,21 +998,212 @@ class SystemInfoGatherer:
                     pass
 
         if modules:
-            best = None
-            for m in modules:
-                if m.get("size") and m.get("type"):
-                    best = m
-                    break
-            if not best:
-                best = modules[0]
-            size_int = int(round(best.get("size") or total_gb or 0))
-            t = best.get("type") or ram_type or ""
-            f = best.get("form") or ("SO-DIMM" if self.system == "Windows" else "DIMM")
-            s = best.get("speed")
-            if t and size_int > 0:
-                if s:
-                    return f"{f} {t} {size_int}GB {s}MHz"
-                return f"{f} {t} {size_int}GB"
+            module_strings = []
+            for module in modules:
+                size_gb = module.get("size")
+                if not size_gb:
+                    continue
+
+                if size_gb < 1:
+                    size_str = f"{int(size_gb * 1024)}MB"
+                else:
+                    size_str = f"{int(round(size_gb))}GB"
+
+                ram_type = module.get("type") or ram_type or "Unknown"
+                form_factor = module.get("form") or ("SO-DIMM" if self.get_computer_type() == "Laptop" else "DIMM") or "Unknown"
+                speed = module.get("speed")
+    def get_ram_info(self):
+        total_gb = 0
+        ram_type = ""
+        modules = []
+        
+        if self.system == "Windows" and WMI_AVAILABLE:
+            try:
+                self._update_status("Querying WMI for memory information...")
+                c = wmi.WMI()
+                memory_modules = c.Win32_PhysicalMemory()
+                
+                # Calculate total memory
+                total_bytes = sum(int(mem.Capacity) for mem in memory_modules if mem.Capacity)
+                total_gb = round(total_bytes / (1024**3))
+                
+                mem_types = {
+                    20: "DDR", 21: "DDR2", 22: "DDR2",
+                    24: "DDR3", 25: "DDR3L",
+                    26: "DDR4", 28: "LPDDR3", 29: "LPDDR4", 30: "LPDDR5", 34: "DDR5"
+                }
+                form_map = {8: "DIMM", 12: "SO-DIMM"}
+                for mem in memory_modules:
+                    size_gb = 0
+                    try:
+                        if mem.Capacity:
+                            size_gb = round(int(mem.Capacity) / (1024**3))
+                    except Exception:
+                        pass
+                    mtype = None
+                    if mem.MemoryType and mem.MemoryType in mem_types:
+                        mtype = mem_types[mem.MemoryType]
+                    speed = None
+                    try:
+                        if getattr(mem, 'Speed', None):
+                            speed = int(mem.Speed)
+                        elif getattr(mem, 'ConfiguredClockSpeed', None):
+                            speed = int(mem.ConfiguredClockSpeed)
+                    except Exception:
+                        speed = None
+                    form = None
+                    try:
+                        ff = getattr(mem, 'FormFactor', None)
+                        if ff in form_map:
+                            form = form_map[ff]
+                    except Exception:
+                        form = None
+                    modules.append({"size": size_gb, "type": mtype, "speed": speed, "form": form})
+                for m in modules:
+                    if m.get("type"):
+                        ram_type = m["type"]
+                        break
+                
+                # If WMI doesn't provide type, try to get it from manufacturer/part number
+                if not ram_type:
+                    for mem in memory_modules:
+                        if mem.PartNumber:
+                            part_num = mem.PartNumber.strip().upper()
+                            if "LPDDR5" in part_num: ram_type = "LPDDR5"; break
+                            elif "DDR5" in part_num: ram_type = "DDR5"; break
+                            elif "LPDDR4" in part_num: ram_type = "LPDDR4"; break
+                            elif "DDR4" in part_num: ram_type = "DDR4"; break
+                            elif "LPDDR3" in part_num: ram_type = "LPDDR3"; break
+                            elif "DDR3" in part_num: ram_type = "DDR3"; break
+                            elif "LPDDR2" in part_num: ram_type = "LPDDR2"; break
+                            elif "DDR2" in part_num: ram_type = "DDR2"; break
+                            elif "LPDDR" in part_num: ram_type = "LPDDR"; break
+                            elif "DDR" in part_num: ram_type = "DDR"; break
+                                
+            except Exception as e:
+                log.warning(f"WMI memory query failed: {e}")
+                self._update_status("WMI memory query failed, trying alternative methods...")
+        
+        elif self.system == "Linux":
+            self._update_status("Running dmidecode for memory information...")
+            output = _run_command(['sudo', 'dmidecode', '--type', 'memory'])
+            if output:
+                total_gb_calc = 0
+                memory_types = []
+                current_module = {}
+                for line in output.splitlines():
+                    line = line.strip()
+                    
+                    if line.startswith("Memory Device"):
+                        # Start of new memory device section
+                        if current_module.get('size') and current_module.get('type'):
+                            memory_types.append(current_module['type'])
+                            total_gb_calc += current_module['size']
+                            modules.append(current_module)
+                        current_module = {}
+                        
+                    elif "Size:" in line and "No Module Installed" not in line and "Unknown" not in line:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            try:
+                                size = int(parts[1])
+                                unit = parts[2] if len(parts) > 2 else ""
+                                if unit.upper() == "MB":
+                                    current_module['size'] = size / 1024
+                                elif unit.upper() == "GB":
+                                    current_module['size'] = size
+                            except (ValueError, IndexError):
+                                continue
+                                
+                    elif "Type:" in line:
+                        type_parts = line.split(":", 1)
+                        if len(type_parts) > 1:
+                            mem_type = type_parts[1].strip()
+                            # Clean up the memory type
+                            if mem_type and mem_type != "Unknown" and mem_type != "<OUT OF SPEC>":
+                                current_module['type'] = mem_type
+                    elif "Form Factor:" in line:
+                        ff = line.split(":", 1)[1].strip().upper()
+                        if ff:
+                            if "SODIMM" in ff or "SO-DIMM" in ff:
+                                current_module['form'] = "SO-DIMM"
+                            elif "DIMM" in ff:
+                                current_module['form'] = "DIMM"
+                    elif "Speed:" in line or "Configured Clock Speed:" in line:
+                        sp = line.split(":", 1)[1]
+                        digits = ''.join(ch for ch in sp if ch.isdigit())
+                        if digits:
+                            try:
+                                current_module['speed'] = int(digits)
+                            except Exception:
+                                pass
+                
+                # Process the last module
+                if current_module.get('size') and current_module.get('type'):
+                    memory_types.append(current_module['type'])
+                    total_gb_calc += current_module['size']
+                    modules.append(current_module)
+                
+                total_gb = round(total_gb_calc)
+                
+                # Use the most common memory type found
+                if memory_types:
+                    ram_type = max(set(memory_types), key=memory_types.count)
+
+        # Fallback to psutil if we couldn't get the info above
+        if total_gb == 0 and psutil:
+            self._update_status("Using psutil for memory information...")
+            total_gb = round(psutil.virtual_memory().total / (1024**3))
+            
+            # Try to get memory type from /proc/meminfo or dmidecode without sudo
+            if self.system == "Linux" and not ram_type:
+                try:
+                    # Try dmidecode without sudo (might work on some systems)
+                    output = _run_command(['dmidecode', '--type', 'memory'])
+                    if output:
+                        for line in output.splitlines():
+                            if "Type:" in line:
+                                type_parts = line.split(":", 1)
+                                if len(type_parts) > 1:
+                                    mem_type = type_parts[1].strip()
+                                    if mem_type and mem_type != "Unknown":
+                                        ram_type = mem_type
+                                        break
+                except:
+                    pass
+
+        if modules:
+            module_strings = []
+            for module in modules:
+                size_gb = module.get("size")
+                if not size_gb:
+                    continue
+
+                if size_gb < 1:
+                    size_str = f"{int(size_gb * 1024)}MB"
+                else:
+                    size_str = f"{int(round(size_gb))}GB"
+
+                current_ram_type = module.get("type") or ram_type
+                speed = module.get("speed")
+                
+                if not current_ram_type and speed:
+                    if speed >= 4800: current_ram_type = "DDR5"
+                    elif speed >= 2133: current_ram_type = "DDR4"
+                    elif speed >= 1066: current_ram_type = "DDR3"
+                    elif speed >= 533: current_ram_type = "DDR2"
+                    else: current_ram_type = "DDR"
+
+                current_ram_type = current_ram_type or "Unknown"
+                form_factor = module.get("form") or ("SO-DIMM" if self.get_computer_type() == "Laptop" else "DIMM")
+                speed_str = f"{speed}MHz" if speed else "N/A"
+
+                module_strings.append(f"{form_factor} {current_ram_type} {size_str} {speed_str}")
+
+            if module_strings:
+                from collections import Counter
+                return Counter(module_strings).most_common(1)[0][0]
+
         if total_gb > 0:
             if ram_type:
                 return f"{ram_type} {total_gb} GB"
@@ -1040,7 +1240,8 @@ class SystemInfoGatherer:
                 usage = psutil.disk_usage(mount_point)
                 actual_gib = usage.total / (1024**3)
                 rounded_gb = _round_storage_gb(actual_gib)
-                return f"SATA {rounded_gb} GB"  # Default assumption for modern systems
+                size_str = _format_storage_size(rounded_gb)
+                return f"SATA SSD {size_str}"  # Default assumption for modern systems
             except Exception as e:
                 log.warning(f"psutil failed to get disk info: {e}")
                 self._update_status("Storage analysis failed")
@@ -1117,7 +1318,8 @@ class SystemInfoGatherer:
                   f"Size: {disk_size_bytes} bytes ({actual_gib:.1f} GiB) -> {rounded_gb} GB - "
                   f"Type: {drive_type}")
         
-        return f"{drive_type} {rounded_gb} GB"
+        size_str = _format_storage_size(rounded_gb)
+        return f"{drive_type} {size_str}"
 
     def _determine_windows_drive_type(self, disk):
         """Determine the type of Windows drive with improved detection."""
@@ -1141,7 +1343,7 @@ class SystemInfoGatherer:
             
             if (interface == 'NVME' or 
                 any(indicator in full_model_info for indicator in nvme_indicators)):
-                return "M.2 NVMe"
+                return "M.2 NVME SSD"
             
             # Enhanced SSD detection
             ssd_indicators = ['SSD', 'SOLID STATE', 'FLASH', 'SAMSUNG SSD', 'CRUCIAL MX', 
@@ -1158,18 +1360,18 @@ class SystemInfoGatherer:
             if is_ssd:
                 # Better form factor detection for SSDs
                 if any(indicator in full_model_info for indicator in ['M.2', 'M2', 'NGFF']):
-                    return "M.2 SATA"
+                    return "M.2 SATA SSD"
                 elif any(indicator in full_model_info for indicator in ['MSATA', 'mSATA']):
-                    return "mSATA"
+                    return "mSATA SSD"
                 elif interface in ['SATA', 'IDE', 'ATA']:
-                    return "SATA"
+                    return "SATA SSD"
                 else:
                     # Unknown interface but it's an SSD - make educated guess
                     size_gb = int(disk.Size) / (1024**3) if disk.Size else 0
                     if size_gb <= 128:  # Small drives often mSATA/M.2
-                        return "M.2 SATA"
+                        return "M.2 SATA SSD"
                     else:
-                        return "SATA"
+                        return "SATA SSD"
             else:
                 # Traditional spinning drive indicators
                 hdd_indicators = ['WD', 'WESTERN DIGITAL', 'SEAGATE', 'TOSHIBA', 'HITACHI', 
@@ -1178,10 +1380,10 @@ class SystemInfoGatherer:
                 # If no SSD indicators and has HDD indicators, or interface suggests mechanical
                 if (any(indicator in full_model_info for indicator in hdd_indicators) or
                     interface in ['IDE', 'SATA'] and not is_ssd):
-                    return "HDD"
+                    return "SATA HDD"
                 
                 # Default fallback
-                return "HDD"
+                return "SATA HDD"
                 
         except Exception as e:
             log.warning(f"Error determining Windows drive type: {e}")
@@ -1189,10 +1391,10 @@ class SystemInfoGatherer:
             if hasattr(disk, 'Model') and disk.Model:
                 model_upper = disk.Model.upper()
                 if 'NVME' in model_upper or 'NVM' in model_upper:
-                    return "M.2 NVMe"
+                    return "M.2 NVME SSD"
                 elif 'SSD' in model_upper:
-                    return "SATA"
-            return "HDD"
+                    return "SATA SSD"
+            return "SATA HDD"
 
     def _get_linux_storage_info(self):
         """Get Linux storage information with drive type detection."""
@@ -1251,7 +1453,8 @@ class SystemInfoGatherer:
         # Determine drive type
         drive_type = self._determine_linux_drive_type(primary_device)
         
-        return f"{drive_type} {rounded_gb} GB"
+        size_str = _format_storage_size(rounded_gb)
+        return f"{drive_type} {size_str}"
 
     def _determine_linux_drive_type(self, device):
         """Determine the type of Linux drive (HDD, SSD, M.2 NVMe, M.2 SATA, mSATA)."""
@@ -1262,11 +1465,11 @@ class SystemInfoGatherer:
             
             # Check for NVMe drives (they appear as nvme* devices)
             if device_name.startswith('nvme') or transport == 'nvme':
-                return "M.2 NVMe"
+                return "M.2 NVME SSD"
             
             # If it's rotational, it's definitely an HDD
             if rotational:
-                return "HDD"
+                return "SATA HDD"
             
             # Non-rotational drive (SSD) - determine interface type
             if transport in ['sata', 'ata']:
@@ -1276,9 +1479,9 @@ class SystemInfoGatherer:
                     with open(f'/sys/block/{device_name}/device/model', 'r') as f:
                         model = f.read().strip().upper()
                         if 'M.2' in model or 'M2' in model:
-                            return "M.2 SATA"
+                            return "M.2 SATA SSD"
                         elif 'MSATA' in model:
-                            return "mSATA"
+                            return "mSATA SSD"
                 except:
                     pass
                 
@@ -1293,22 +1496,22 @@ class SystemInfoGatherer:
                             subsystem = os.readlink(subsystem_path)
                             if 'pci' in subsystem.lower():
                                 # Modern SATA SSDs connected via PCIe are often M.2
-                                return "M.2 SATA"
+                                return "M.2 SATA SSD"
                 except:
                     pass
                 
-                return "SATA"
+                return "SATA SSD"
             
             elif transport == 'usb':
-                return "SATA"  # USB-connected drives are typically SATA-based
+                return "SATA SSD"  # USB-connected drives are typically SATA-based
             
             else:
                 # Unknown transport, but it's an SSD
-                return "SATA"  # Default assumption
+                return "SATA SSD"  # Default assumption
                 
         except Exception as e:
             log.warning(f"Error determining Linux drive type: {e}")
-            return "SATA"
+            return "SATA SSD"
 
     def _parse_linux_size(self, size_str):
         """Parse Linux size string (e.g., '500G', '1.5T') to bytes."""

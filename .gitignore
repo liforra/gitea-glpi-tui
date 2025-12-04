@@ -6,7 +6,7 @@ __pycache__/
 
 # C extensions
 *.so
-glpi-explanation.md
+glpi_config.toml
 # Distribution / packaging
 .Python
 build/
@@ -165,4 +165,3 @@ cython_debug/
 *.exe
 *build*
 *dist*
-api_doc.json
