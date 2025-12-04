@@ -39,7 +39,7 @@ jobs:
           pip install pyinstaller
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --add-data "assets:assets" --paths . --hidden-import glpi --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+          pyinstaller --onefile --windowed --add-data "assets:assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --log-level=DEBUG --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -65,7 +65,7 @@ jobs:
           pip install pyinstaller
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --add-data "assets;assets" --paths . --hidden-import glpi --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+          pyinstaller --onefile --windowed --add-data "assets;assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --log-level=DEBUG --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
