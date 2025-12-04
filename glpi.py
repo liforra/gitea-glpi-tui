@@ -135,54 +135,52 @@ def getId(itemtype, query):
 getID = getId
 getid = getId
 
-def add(itemtype, data):
-    match itemtype:
-        case "Computer": 
-            log.debug('Reached add: Computer')
-            
-            payload_input = {
-                "name": data.get("name"),
-                "serial": data.get("serial"),
-                "locations_id": getId("Location", data.get("location")),
-                "users_id_tech": getId("User", username),
-                "groups_id_tech": 1,
-                "computermodels_id": getId("ComputerModel", data.get("model")),
-                "comment" : data.get("comment"),
-                "manufacturers_id": getId("Manufacturer", data.get("manufacturer")),
-                "computertypes_id": getId("ComputerType", data.get("computer_type")),
-                "_plugin_fields_funktionsfhigkeitfielddropdowns_id_defined": [7],
-            }
+    if itemtype == "Computer": 
+        log.debug('Reached add: Computer')
+        
+        payload_input = {
+            "name": data.get("name"),
+            "serial": data.get("serial"),
+            "locations_id": getId("Location", data.get("location")),
+            "users_id_tech": getId("User", username),
+            "groups_id_tech": 1,
+            "computermodels_id": getId("ComputerModel", data.get("model")),
+            "comment" : data.get("comment"),
+            "manufacturers_id": getId("Manufacturer", data.get("manufacturer")),
+            "computertypes_id": getId("ComputerType", data.get("computer_type")),
+            "_plugin_fields_funktionsfhigkeitfielddropdowns_id_defined": [7],
+        }
 
-            battery_health_str = data.get("akkugesundheitin")
-            if battery_health_str:
-                try:
-                    health_value = int(battery_health_str)
-                    payload_input["akkugesundheitin"] = health_value
-                    log.debug(f"Adding custom field for battery health: {health_value} (as integer)")
-                except (ValueError, TypeError):
-                    log.warning(f"Could not convert battery health '{battery_health_str}' to an integer. Skipping field.")
+        battery_health_str = data.get("akkugesundheitin")
+        if battery_health_str:
+            try:
+                health_value = int(battery_health_str)
+                payload_input["akkugesundheitin"] = health_value
+                log.debug(f"Adding custom field for battery health: {health_value} (as integer)")
+            except (ValueError, TypeError):
+                log.warning(f"Could not convert battery health '{battery_health_str}' to an integer. Skipping field.")
 
-            payload = {"input": payload_input}
-            
-            log.debug(f"Payload Pre-Conversion: {payload}")
-            payload_json = json.dumps(payload)
-            log.debug(f"Payload Post-Conversion: {payload_json}")
-            
-            response = sendglpi(f"/{itemtype}/", None, "POST", payload_json)
-            log.debug(f"Response {response}")
-            
-            response_data = json.loads(response)
-            computer_id = response_data.get("id")
-            
-            if not computer_id:
-                log.error(f"Failed to create computer. Response: {response}")
-                raise Exception(f"Computer creation failed: {response_data.get('message', 'Unknown error')}")
+        payload = {"input": payload_input}
+        
+        log.debug(f"Payload Pre-Conversion: {payload}")
+        payload_json = json.dumps(payload)
+        log.debug(f"Payload Post-Conversion: {payload_json}")
+        
+        response = sendglpi(f"/{itemtype}/", None, "POST", payload_json)
+        log.debug(f"Response {response}")
+        
+        response_data = json.loads(response)
+        computer_id = response_data.get("id")
+        
+        if not computer_id:
+            log.error(f"Failed to create computer. Response: {response}")
+            raise Exception(f"Computer creation failed: {response_data.get('message', 'Unknown error')}")
 
-            items_to_add = ["cpu", "processor", "gpu", "ram", "hdd", "os"]
-            if any(item in data for item in items_to_add):
-                addToItemtype(computer_id, data)
-            
-            return computer_id
+        items_to_add = ["cpu", "processor", "gpu", "ram", "hdd", "os"]
+        if any(item in data for item in items_to_add):
+            addToItemtype(computer_id, data)
+        
+        return computer_id
 
 def addToItemtype(device_id, data):
     # 1. Handle Hardware Components
@@ -192,21 +190,20 @@ def addToItemtype(device_id, data):
             log.debug(f"Adding hardware component '{component}' to device ID {device_id}")
             item_payload = {'items_id': device_id, 'itemtype': 'Computer'}
             
-            match component:
-                case "processor" | "cpu":
-                    item_payload['deviceprocessors_id'] = getId("DeviceProcessor", data.get(component))
-                    endpoint = "/Item_DeviceProcessor"
-                case "gpu":
-                    item_payload['devicegraphiccards_id'] = getId("DeviceGraphicCard", data.get(component))
-                    endpoint = "/Item_DeviceGraphicCard"
-                case "ram":
-                    item_payload['devicememories_id'] = getId("DeviceMemory", data.get(component))
-                    endpoint = "/Item_DeviceMemory"
-                case "hdd":
-                    item_payload['deviceharddrives_id'] = getId("DeviceHardDrive", data.get(component))
-                    endpoint = "/Item_DeviceHardDrive"
-                case _:
-                    continue
+            if component in ("processor", "cpu"):
+                item_payload['deviceprocessors_id'] = getId("DeviceProcessor", data.get(component))
+                endpoint = "/Item_DeviceProcessor"
+            elif component == "gpu":
+                item_payload['devicegraphiccards_id'] = getId("DeviceGraphicCard", data.get(component))
+                endpoint = "/Item_DeviceGraphicCard"
+            elif component == "ram":
+                item_payload['devicememories_id'] = getId("DeviceMemory", data.get(component))
+                endpoint = "/Item_DeviceMemory"
+            elif component == "hdd":
+                item_payload['deviceharddrives_id'] = getId("DeviceHardDrive", data.get(component))
+                endpoint = "/Item_DeviceHardDrive"
+            else:
+                continue
             
             payload = json.dumps({'input': item_payload})
             sendglpi(endpoint, None, method="POST", payload=payload)
@@ -236,9 +233,8 @@ def addToItemtype(device_id, data):
 
 
 def search(mode, query):
-    match mode:
-        case "serial":
-            return(sendglpi(f"/search/Computer/?criteria[0][link]=AND&criteria[0][field]=5&criteria[0][searchtype]=contains&criteria[0][value]={query}"))
+    if mode == "serial":
+        return(sendglpi(f"/search/Computer/?criteria[0][link]=AND&criteria[0][field]=5&criteria[0][searchtype]=contains&criteria[0][value]={query}"))
     
 
 def auth(username_param, password, verify, remember):
