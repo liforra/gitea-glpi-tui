@@ -39,7 +39,10 @@ jobs:
           pip install pyinstaller
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --add-data "assets:assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --log-level=DEBUG --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+          pyinstaller --onefile --windowed --add-data "assets:assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --debug=imports --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+      - name: Show warning log
+        run: cat build/GLPI-Client-${{ needs.get-version.outputs.sha_short }}/warn-GLPI-Client-${{ needs.get-version.outputs.sha_short }}.txt
+        continue-on-error: true
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -65,7 +68,10 @@ jobs:
           pip install pyinstaller
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --add-data "assets;assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --log-level=DEBUG --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+          pyinstaller --onefile --windowed --add-data "assets;assets" --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --debug=imports --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+      - name: Show warning log
+        run: type build\GLPI-Client-${{ needs.get-version.outputs.sha_short }}\warn-GLPI-Client-${{ needs.get-version.outputs.sha_short }}.txt
+        continue-on-error: true
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
