@@ -6,53 +6,93 @@ on:
       - main
 
 jobs:
-  build-and-release:
+  get-version:
     runs-on: ubuntu-latest
+    outputs:
+      sha_short: ${{ steps.vars.outputs.sha_short }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
       - name: Get short commit hash
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+  build-linux:
+    needs: get-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
       - name: Replace version in gui.py
-        run: |
-          sed -i "s/APP_VERSION = ".*"/APP_VERSION = "${{ steps.vars.outputs.sha_short }}"/" gui.py
-      
+        run: sed -i "s/APP_VERSION = ".*"/APP_VERSION = "${{ needs.get-version.outputs.sha_short }}"/" gui.py
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install cython build wheel
-
       - name: Build with setup.py
         run: python setup.py sdist bdist_wheel
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-artifacts
+          path: dist/
 
+  build-windows:
+    needs: get-version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Replace version in gui.py
+        run: (Get-Content gui.py) -replace 'APP_VERSION = ".*"', 'APP_VERSION = "${{ needs.get-version.outputs.sha_short }}"' | Set-Content gui.py
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build executable with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --add-data "assets;assets" --name "GLPI-Client-${{ needs.get-version.outputs.sha_short }}" gui.py
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-artifact
+          path: dist/GLPI-Client-${{ needs.get-version.outputs.sha_short }}.exe
+
+  create-release:
+    needs: [build-linux, build-windows, get-version]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.vars.outputs.sha_short }}
-          release_name: Release ${{ steps.vars.outputs.sha_short }}
+          tag_name: ${{ needs.get-version.outputs.sha_short }}
+          release_name: Release ${{ needs.get-version.outputs.sha_short }}
           body: |
             Automated release for commit ${{ github.sha }}.
           draft: false
           prerelease: false
-
       - name: Upload Release Assets
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/*
-          asset_name: glpi-client-${{ steps.vars.outputs.sha_short }}
+          asset_path: ./artifacts/**/*
           asset_content_type: application/octet-stream
